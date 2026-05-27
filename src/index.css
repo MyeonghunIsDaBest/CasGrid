@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* CasGrid — warm "energy amber" identity, light theme */
+    --background: 40 33% 99%;
+    --foreground: 24 10% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 24 10% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 10% 10%;
+    --primary: 32 95% 44%;            /* amber-600 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 24% 96%;
+    --secondary-foreground: 24 12% 18%;
+    --muted: 40 24% 96%;
+    --muted-foreground: 28 8% 46%;
+    --accent: 40 96% 94%;             /* warm amber tint */
+    --accent-foreground: 32 80% 28%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 36 22% 90%;
+    --input: 36 22% 88%;
+    --ring: 38 92% 50%;               /* amber-500 */
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 24 12% 7%;
+    --foreground: 40 20% 96%;
+    --card: 24 12% 9%;
+    --card-foreground: 40 20% 96%;
+    --popover: 24 12% 9%;
+    --popover-foreground: 40 20% 96%;
+    --primary: 38 92% 50%;            /* amber-500 */
+    --primary-foreground: 24 30% 10%;
+    --secondary: 24 8% 16%;
+    --secondary-foreground: 40 20% 96%;
+    --muted: 24 8% 16%;
+    --muted-foreground: 36 10% 64%;
+    --accent: 32 40% 18%;
+    --accent-foreground: 40 90% 80%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 24 8% 18%;
+    --input: 24 8% 18%;
+    --ring: 38 92% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Manrope', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv11", "ss01";
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Sora', ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: 'Sora', ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.02em;
+  }
+  /* Subtle dotted "grid" texture for the app shell — evokes CasGrid, stays clean */
+  .casgrid-grid-bg {
+    background-color: hsl(40 33% 98%);
+    background-image: radial-gradient(hsl(32 25% 70% / 0.28) 1px, transparent 1.4px);
+    background-size: 22px 22px;
+    background-position: -11px -11px;
+  }
+}
