@@ -5,3 +5,4 @@ dist/
 *.env
 .DS_Store
 bundle.html
+dbpwd.md
