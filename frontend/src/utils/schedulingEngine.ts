@@ -20,6 +20,32 @@ export function generateId(): string {
 }
 
 /**
+ * Derived "remaining hours" for a job — work that isn't yet on the calendar.
+ * The stored `job.remainingHours` column is treated as legacy; everything reads
+ * through this helper so progress stays consistent with the schedule entries
+ * that actually exist.
+ */
+export function getRemainingHours(job: Job, entries: ScheduleEntry[]): number {
+  if (job.status === 'completed') return 0;
+  const scheduled = entries
+    .filter(e => e.jobId === job.id)
+    .reduce((s, e) => s + e.hours, 0);
+  return Math.max(0, job.estimatedHours - scheduled);
+}
+
+/**
+ * Hours the scheduler still needs to lay down for a job — excludes auto entries
+ * (which are about to be deleted and replaced) but honours manual overrides
+ * already locked in.
+ */
+function getHoursToSchedule(job: Job, manualEntries: ScheduleEntry[]): number {
+  const manualHours = manualEntries
+    .filter(e => e.jobId === job.id)
+    .reduce((s, e) => s + e.hours, 0);
+  return Math.max(0, job.estimatedHours - manualHours);
+}
+
+/**
  * Build a map of which staff are blocked on which days due to StaffEvents.
  * A blocked staff member has 0 available capacity that day.
  */
@@ -76,7 +102,7 @@ export function autoSchedule(
       j.status !== 'completed' &&
       j.status !== 'onHold' &&
       j.assignedStaffIds.length > 0 &&
-      j.remainingHours > 0
+      getHoursToSchedule(j, manualEntries) > 0
     )
     .sort((a, b) => {
       const pDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
@@ -85,7 +111,7 @@ export function autoSchedule(
     });
 
   for (const job of schedulableJobs) {
-    scheduleJobWithOverrides(job, staff, capacityUsed, blocked, result, overrideOverbooking);
+    scheduleJobWithOverrides(job, staff, capacityUsed, blocked, result, overrideOverbooking, manualEntries);
   }
 
   return result;
@@ -97,7 +123,8 @@ function scheduleJobWithOverrides(
   capacityUsed: DailyCapacityMap,
   blocked: BlockedMap,
   result: ScheduleEntry[],
-  overrideOverbooking: boolean
+  overrideOverbooking: boolean,
+  manualEntries: ScheduleEntry[]
 ): void {
   const startDate = fromDateString(job.startDate);
   const deadline = fromDateString(job.deadline);
@@ -107,7 +134,7 @@ function scheduleJobWithOverrides(
   const staffById: Record<string, Staff> = {};
   for (const s of allStaff) staffById[s.id] = s;
 
-  let hoursLeft = job.remainingHours;
+  let hoursLeft = getHoursToSchedule(job, manualEntries);
 
   // Group days by which staff are assigned (using dailyStaffOverrides)
   // We need to figure out how many "staff-hours" are available per day
@@ -204,7 +231,7 @@ export function isJobAtRisk(job: Job, entries: ScheduleEntry[], staff: Staff[]):
   const scheduledHours = entries.filter(e => e.jobId === job.id).reduce((s, e) => s + e.hours, 0);
   const deadline = fromDateString(job.deadline);
   if (isBefore(deadline, startOfDay(new Date()))) return true;
-  if ((scheduledHours / Math.max(job.estimatedHours, 1)) < 0.85 && job.remainingHours > 0) return true;
+  if ((scheduledHours / Math.max(job.estimatedHours, 1)) < 0.85 && getRemainingHours(job, entries) > 0) return true;
   return false;
 }
 

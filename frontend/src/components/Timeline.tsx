@@ -4,7 +4,7 @@ import { addDays, format, differenceInCalendarDays, isBefore, isAfter } from 'da
 import { useApp } from '../context/AppContext';
 import { useJobModal } from '../context/JobModalContext';
 import { toDateString, isToday } from '../utils/dateUtils';
-import { isJobAtRisk } from '../utils/schedulingEngine';
+import { isJobAtRisk, getRemainingHours } from '../utils/schedulingEngine';
 import { AlertTriangle, GripHorizontal, Clock, Users } from 'lucide-react';
 
 const DAYS_TO_SHOW = 49; // 7 weeks
@@ -133,7 +133,11 @@ export function Timeline() {
   function getJobHours(jobId) {
     const scheduled = scheduleEntries.filter(e => e.jobId === jobId).reduce((s,e) => s+e.hours, 0);
     const job = jobs.find(j => j.id === jobId);
-    return { scheduled, estimated: job?.estimatedHours ?? 0, remaining: job?.remainingHours ?? 0 };
+    return {
+      scheduled,
+      estimated: job?.estimatedHours ?? 0,
+      remaining: job ? getRemainingHours(job, scheduleEntries) : 0,
+    };
   }
 
   return (

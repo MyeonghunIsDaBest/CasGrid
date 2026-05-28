@@ -26,7 +26,7 @@ function fromDbStaff(r: Record<string, unknown>): Staff {
     name:                 r.name                  as string,
     role:                 r.role                  as string,
     type:                 r.type                  as Staff['type'],
-    dailyAvailableHours:  Number(r.daily_available_hours),
+    dailyAvailableHours:  Number(r.daily_available_hours) || 0,
     skills:               (r.skills               as string[]) ?? [],
     isBillable:           r.is_billable            as boolean,
     canAssistFieldWork:   r.can_assist_field_work  as boolean,
@@ -79,8 +79,8 @@ function fromDbJob(r: Record<string, unknown>): Job {
     clientEmail:          (r.client_email           as string) ?? '',
     clientPhone:          (r.client_phone           as string) ?? '',
     simproJobId:          (r.simpro_job_id          as string) ?? '',
-    estimatedHours:       Number(r.estimated_hours),
-    remainingHours:       Number(r.remaining_hours),
+    estimatedHours:       Number(r.estimated_hours) || 0,
+    remainingHours:       Number(r.remaining_hours) || 0,
     priority:             r.priority                as Job['priority'],
     startDate:            r.start_date              as string,
     deadline:             r.deadline                as string,
@@ -138,7 +138,7 @@ function fromDbEntry(r: Record<string, unknown>): ScheduleEntry {
     jobId:            r.job_id           as string,
     staffId:          r.staff_id         as string,
     date:             r.date             as string,
-    hours:            Number(r.hours),
+    hours:            Number(r.hours) || 0,
     isManualOverride: (r.is_manual_override as boolean) ?? false,
   };
 }
@@ -204,7 +204,7 @@ function fromDbEvent(r: Record<string, unknown>): StaffEvent {
     date:     r.date     as string,
     type:     r.type     as StaffEvent['type'],
     label:    r.label    as string,
-    hours:    Number(r.hours),
+    hours:    Number(r.hours) || 0,
     colour:   r.colour   as string,
   };
 }
@@ -287,12 +287,15 @@ export async function fetchSimproConfig(): Promise<SimproConfig | null> {
 }
 
 export async function upsertSimproConfig(c: SimproConfig): Promise<void> {
+  // Note: `api_token` is intentionally NOT persisted. The simpro_config table has
+  // RLS disabled, so writing the token would expose it to any client with the
+  // anon key. Tokens live in component-local state only until a server-side proxy
+  // is in place — see plan.md "Out of scope" / final phase.
   const { error } = await supabase.from('simpro_config').upsert({
     id:                   1,
     enabled:              c.enabled,
     subdomain:            c.subdomain,
     company_id:           c.companyId,
-    api_token:            c.apiToken,
     auto_sync_on_save:    c.autoSyncOnSave,
     send_client_messages: c.sendClientMessages,
     last_sync_at:         c.lastSyncAt,
@@ -305,7 +308,10 @@ export async function upsertSimproConfig(c: SimproConfig): Promise<void> {
 
 /**
  * Wipes and re-seeds all tables with demo data.
- * Called by the "Reset to Demo" button.
+ * Called by the "Reset to Demo" button and by importData.
+ *
+ * Every op checks `.error` and raises through the standard helper so partial
+ * failures surface as exceptions instead of silent corruption.
  */
 export async function seedDatabase(
   staff: Staff[],
@@ -314,18 +320,45 @@ export async function seedDatabase(
   staffEvents: StaffEvent[],
 ): Promise<void> {
   // Clear in dependency order
-  await supabase.from('schedule_entries').delete().neq('id', '');
-  await supabase.from('staff_events').delete().neq('id', '');
-  await supabase.from('jobs').delete().neq('id', '');
-  await supabase.from('staff').delete().neq('id', '');
-  await supabase.from('app_settings').upsert({ id: 1, override_overbooking: false, working_days_per_week: [1,2,3,4,5] });
-  await supabase.from('simpro_config').upsert({ id: 1, enabled: false, subdomain: '', company_id: '0', api_token: '', auto_sync_on_save: false, send_client_messages: false, last_sync_at: null, field_mapping: { jobNameField:'Name', clientNameField:'Customer.CompanyName', startDateField:'DateIssued', dueDateField:'DateRequired', estimatedHoursField:'TotalLabourHours', statusField:'Status' } });
+  let r;
+  r = await supabase.from('schedule_entries').delete().neq('id', '');
+  if (r.error) raise('seed:delete schedule_entries', r.error);
+  r = await supabase.from('staff_events').delete().neq('id', '');
+  if (r.error) raise('seed:delete staff_events', r.error);
+  r = await supabase.from('jobs').delete().neq('id', '');
+  if (r.error) raise('seed:delete jobs', r.error);
+  r = await supabase.from('staff').delete().neq('id', '');
+  if (r.error) raise('seed:delete staff', r.error);
+
+  // Settings + simpro_config: delete-then-insert (not upsert) so a previous
+  // non-default value doesn't survive a reset.
+  r = await supabase.from('app_settings').delete().eq('id', 1);
+  if (r.error) raise('seed:delete app_settings', r.error);
+  r = await supabase.from('app_settings').insert({ id: 1, override_overbooking: false, working_days_per_week: [1,2,3,4,5] });
+  if (r.error) raise('seed:insert app_settings', r.error);
+
+  r = await supabase.from('simpro_config').delete().eq('id', 1);
+  if (r.error) raise('seed:delete simpro_config', r.error);
+  r = await supabase.from('simpro_config').insert({ id: 1, enabled: false, subdomain: '', company_id: '0', api_token: '', auto_sync_on_save: false, send_client_messages: false, last_sync_at: null, field_mapping: { jobNameField:'Name', clientNameField:'Customer.CompanyName', startDateField:'DateIssued', dueDateField:'DateRequired', estimatedHoursField:'TotalLabourHours', statusField:'Status' } });
+  if (r.error) raise('seed:insert simpro_config', r.error);
 
   // Insert fresh demo data
-  if (staff.length)         await supabase.from('staff').insert(staff.map(toDbStaff));
-  if (jobs.length)          await supabase.from('jobs').insert(jobs.map(toDbJob));
-  if (staffEvents.length)   await supabase.from('staff_events').insert(staffEvents.map(toDbEvent));
-  if (scheduleEntries.length) await supabase.from('schedule_entries').insert(scheduleEntries.map(toDbEntry));
+  if (staff.length) {
+    r = await supabase.from('staff').insert(staff.map(toDbStaff));
+    if (r.error) raise('seed:insert staff', r.error);
+  }
+  if (jobs.length) {
+    r = await supabase.from('jobs').insert(jobs.map(toDbJob));
+    if (r.error) raise('seed:insert jobs', r.error);
+  }
+  if (staffEvents.length) {
+    r = await supabase.from('staff_events').insert(staffEvents.map(toDbEvent));
+    if (r.error) raise('seed:insert staff_events', r.error);
+  }
+  if (scheduleEntries.length) {
+    r = await supabase.from('schedule_entries').insert(scheduleEntries.map(toDbEntry));
+    if (r.error) raise('seed:insert schedule_entries', r.error);
+  }
 }
 
 // ─── RAW ROW MAPPERS (exported for Realtime handlers) ────────────────────────

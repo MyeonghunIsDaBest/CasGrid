@@ -329,6 +329,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }));
         })
 
+      // ── simpro_config ──
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'simpro_config' },
+        ({ new: r }) => {
+          const row = r as Record<string, unknown>;
+          withSkip(() => dispatch({
+            type: 'UPDATE_SIMPRO_CONFIG',
+            payload: {
+              enabled:             row.enabled              as boolean,
+              subdomain:           row.subdomain            as string,
+              companyId:           row.company_id           as string,
+              autoSyncOnSave:      row.auto_sync_on_save    as boolean,
+              sendClientMessages:  row.send_client_messages as boolean,
+              lastSyncAt:          row.last_sync_at         as string | null,
+              fieldMapping:        row.field_mapping        as SimproConfig['fieldMapping'],
+              // apiToken is intentionally not synced — it is not persisted (see db.ts:upsertSimproConfig)
+            },
+          }));
+        })
+
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setSyncStatus('live');
@@ -486,20 +505,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   function importData(json: string) {
+    let parsed: AppState;
     try {
-      const parsed = JSON.parse(json) as AppState;
-      // Write everything to Supabase
-      db.seedDatabase(
-        parsed.staff,
-        parsed.jobs,
-        parsed.scheduleEntries,
-        parsed.staffEvents,
-      ).then(() => {
-        dispatch({ type: 'LOAD_ALL', payload: parsed });
-      }).catch(err => toast.error(`Import failed: ${err.message}`));
+      parsed = JSON.parse(json) as AppState;
     } catch {
       toast.error('Invalid JSON file. Please check the format and try again.');
+      return;
     }
+    // Minimal shape check — bail before we wipe the DB if the payload is wrong.
+    // We don't validate every nested field (that's what type-checking the import
+    // boundary would do); we just confirm the top-level arrays exist.
+    if (
+      !parsed ||
+      !Array.isArray(parsed.staff) ||
+      !Array.isArray(parsed.jobs) ||
+      !Array.isArray(parsed.scheduleEntries) ||
+      !Array.isArray(parsed.staffEvents)
+    ) {
+      toast.error('Import file is missing one of: staff, jobs, scheduleEntries, staffEvents.');
+      return;
+    }
+    db.seedDatabase(
+      parsed.staff,
+      parsed.jobs,
+      parsed.scheduleEntries,
+      parsed.staffEvents,
+    ).then(() => {
+      dispatch({ type: 'LOAD_ALL', payload: parsed });
+    }).catch(err => toast.error(`Import failed: ${err.message}`));
   }
 
   // ── Render ────────────────────────────────────────────────────────────────

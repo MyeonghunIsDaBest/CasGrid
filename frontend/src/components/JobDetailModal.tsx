@@ -10,7 +10,7 @@ import { useApp } from '../context/AppContext';
 import { useJobModal } from '../context/JobModalContext';
 import { JobForm } from './forms/JobForm';
 import { DailyStaffAssignment } from './DailyStaffAssignment';
-import { isJobAtRisk, getEffectiveAvailable } from '../utils/schedulingEngine';
+import { isJobAtRisk, getEffectiveAvailable, getRemainingHours } from '../utils/schedulingEngine';
 import { fromDateString, toDateString, getWorkingDays } from '../utils/dateUtils';
 import { format } from 'date-fns';
 
@@ -43,6 +43,7 @@ export function JobDetailModal() {
   const assignedStaff = staff.filter(s => job.assignedStaffIds.includes(s.id));
   const jobEntries = scheduleEntries.filter(e => e.jobId === job.id);
   const scheduledHours = jobEntries.reduce((s, e) => s + e.hours, 0);
+  const remainingHours = getRemainingHours(job, scheduleEntries);
   const progressPct = Math.min(100, Math.round((scheduledHours / Math.max(job.estimatedHours, 1)) * 100));
   const atRisk = isJobAtRisk(job, scheduleEntries, staff);
   const daysLeft = differenceInCalendarDays(fromDateString(job.deadline), new Date());
@@ -201,7 +202,7 @@ export function JobDetailModal() {
                   { label: 'Start', value: job.startDate },
                   { label: 'Deadline', value: job.deadline },
                   { label: 'Est. Hours', value: `${job.estimatedHours}h` },
-                  { label: 'Remaining', value: `${job.remainingHours}h` },
+                  { label: 'Remaining', value: `${remainingHours.toFixed(1)}h` },
                 ].map(item => (
                   <div key={item.label} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                     <div className="text-[9px] uppercase tracking-wide text-slate-400 mb-0.5">{item.label}</div>
@@ -361,7 +362,7 @@ export function JobDetailModal() {
                   <tbody>
                     {[
                       { label: 'Estimated Hours', value: `${job.estimatedHours}h` },
-                      { label: 'Remaining Hours', value: `${job.remainingHours}h` },
+                      { label: 'Remaining Hours', value: `${remainingHours.toFixed(1)}h` },
                       { label: 'Scheduled Hours', value: `${scheduledHours.toFixed(1)}h`, highlight: scheduledHours >= job.estimatedHours * 0.85 },
                       { label: 'Total Staff Capacity', value: `${totalStaffAvailable.toFixed(0)}h` },
                       { label: 'Working Days', value: `${workDays.length} days` },
@@ -388,7 +389,7 @@ export function JobDetailModal() {
             <Edit2 size={12}/> Edit
           </button>
           {job.status !== 'completed' && (
-            <button onClick={() => { updateJob({ ...job, status: 'completed', remainingHours: 0 }); closeJob(); }}
+            <button onClick={() => { updateJob({ ...job, status: 'completed' }); closeJob(); }}
               className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-xl hover:bg-emerald-100 border border-emerald-200 transition-colors">
               <CheckCircle size={12}/> Complete
             </button>

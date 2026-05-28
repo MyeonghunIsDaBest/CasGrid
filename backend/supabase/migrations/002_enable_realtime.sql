@@ -1,20 +1,21 @@
 -- ============================================================
--- CasGrid — ENABLE / REPAIR REALTIME   (idempotent, NON-destructive)
+-- CasGrid — REPAIR BACKEND (idempotent, NON-destructive)
 -- ============================================================
 -- Safe to run repeatedly. Does NOT drop, truncate, or alter any row
--- data. It only (re)applies the grants and Realtime wiring that live
--- cross-device sync depends on.
+-- data. It (re)applies the open-access + Realtime configuration that
+-- live cross-device sync depends on:
+--   • grants for the browser (anon) role
+--   • Row-Level Security OFF  (CasGrid has no login — shared access)
+--   • Realtime publication + replica identity
 --
 -- WHEN TO USE:
---   • Changes save and survive a refresh, but do NOT appear live on
---     other devices (the Realtime publication / replica identity was
---     never applied, or was lost by an earlier DROP ... CASCADE).
+--   • "new row violates row-level security policy" when saving.
+--   • Changes save but don't appear live on other devices.
+--   • Any time the backend was set up via the Table Editor (which
+--     turns RLS on by default) instead of 001_initial_schema.sql.
 --
 -- HOW TO RUN:
 --   Supabase dashboard → SQL Editor → New query → paste this → Run.
---   Then: Database → Replication → confirm the supabase_realtime
---   publication lists all 6 tables, and Project Settings → confirm
---   Realtime is enabled for the project.
 -- ============================================================
 
 -- ── 1. Grants (anon = the browser role; idempotent) ──────────
@@ -25,11 +26,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated;
 
--- ── 2. Replica identity + publication membership ─────────────
--- Postgres has no "ADD TABLE IF NOT EXISTS" for publications, and
--- ALTER PUBLICATION ... ADD TABLE errors if the table is already a
--- member — so guard each add with pg_publication_tables. The
--- to_regclass() check skips a missing table instead of failing.
+-- ── 2. Row-Level Security OFF + Realtime wiring ──────────────
+-- CasGrid uses open shared access (no login). With RLS enabled and no
+-- policy, the anon role can read but every INSERT/UPDATE/DELETE fails
+-- with "violates row-level security policy". Turning RLS off restores
+-- the intended shared-access model. REPLICA IDENTITY FULL gives full
+-- old/new rows in realtime events. to_regclass guards skip a missing
+-- table; the publication check avoids "already member" errors.
 DO $$
 DECLARE t TEXT;
 BEGIN
@@ -37,6 +40,7 @@ BEGIN
     'staff','jobs','schedule_entries','staff_events','app_settings','simpro_config'
   ] LOOP
     IF to_regclass('public.' || t) IS NOT NULL THEN
+      EXECUTE format('ALTER TABLE public.%I DISABLE ROW LEVEL SECURITY;', t);
       EXECUTE format('ALTER TABLE public.%I REPLICA IDENTITY FULL;', t);
 
       IF NOT EXISTS (
@@ -52,7 +56,14 @@ BEGIN
   END LOOP;
 END $$;
 
--- ── 3. Verify — should return all 6 table names ──────────────
+-- ── 3. Verify ────────────────────────────────────────────────
+-- rls_on should be FALSE for all 6 rows:
+SELECT relname AS table_name, relrowsecurity AS rls_on
+FROM pg_class
+WHERE relname IN ('staff','jobs','schedule_entries','staff_events','app_settings','simpro_config')
+ORDER BY relname;
+
+-- and all 6 tables should be listed here (realtime):
 SELECT tablename
 FROM pg_publication_tables
 WHERE pubname = 'supabase_realtime' AND schemaname = 'public'
