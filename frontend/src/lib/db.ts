@@ -89,6 +89,8 @@ function fromDbJob(r: Record<string, unknown>): Job {
     status:               r.status                  as Job['status'],
     notes:                (r.notes                  as string) ?? '',
     colour:               r.colour                  as string,
+    runningStartedAt:     (r.running_started_at     as string | null) ?? null,
+    runningTimeMs:        Number(r.running_time_ms) || 0,
   };
 }
 
@@ -110,6 +112,8 @@ function toDbJob(j: Job) {
     status:                j.status,
     notes:                 j.notes,
     colour:                j.colour,
+    running_started_at:    j.runningStartedAt,
+    running_time_ms:       j.runningTimeMs,
     updated_at:            new Date().toISOString(),
   };
 }
@@ -173,19 +177,27 @@ export async function deleteScheduleEntry(id: string): Promise<void> {
 
 /**
  * Called after auto-schedule runs.
- * Atomically replaces all non-manual entries so the schedule stays consistent.
- * Manual overrides are left untouched (they already exist in the DB).
+ * Replaces future non-manual entries while leaving manual overrides AND past
+ * auto-entries untouched. Past auto-entries are treated as "logged" — they
+ * represent work already done and must survive a re-schedule.
  */
 export async function replaceAutoScheduleEntries(entries: ScheduleEntry[]): Promise<void> {
-  // 1. Delete every non-manual entry (safe — manual ones are preserved)
+  // Compare against the YYYY-MM-DD strings the DB stores; string compare keeps
+  // us out of local-vs-UTC trouble for the cutoff.
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // 1. Delete only future non-manual entries (past ones are locked)
   const { error: delErr } = await supabase
     .from('schedule_entries')
     .delete()
-    .eq('is_manual_override', false);
+    .eq('is_manual_override', false)
+    .gte('date', todayStr);
   if (delErr) raise('replaceAutoScheduleEntries:delete', delErr);
 
-  // 2. Insert new auto-schedule entries in batches of 500
-  const autoEntries = entries.filter(e => !e.isManualOverride);
+  // 2. Insert the new future auto-schedule entries in batches of 500.
+  //    Past auto-entries that `autoSchedule` carried through into `entries` are
+  //    already in the DB — don't try to re-insert them (would conflict on PK).
+  const autoEntries = entries.filter(e => !e.isManualOverride && e.date >= todayStr);
   if (autoEntries.length === 0) return;
 
   for (let i = 0; i < autoEntries.length; i += 500) {
@@ -253,6 +265,9 @@ export async function fetchSettings(): Promise<SharedSettings | null> {
   return {
     overrideOverbooking:  data.override_overbooking,
     workingDaysPerWeek:   data.working_days_per_week,
+    // JS-layer default so the app works pre-migration (column may be absent).
+    capacityTargets:      (data.capacity_targets as { weeklyBaseline: number; weeklyStretch: number } | undefined)
+                            ?? { weeklyBaseline: 240, weeklyStretch: 350 },
   };
 }
 
@@ -261,6 +276,7 @@ export async function upsertSettings(s: SharedSettings): Promise<void> {
     id:                     1,
     override_overbooking:   s.overrideOverbooking,
     working_days_per_week:  s.workingDaysPerWeek,
+    capacity_targets:       s.capacityTargets ?? { weeklyBaseline: 240, weeklyStretch: 350 },
   });
   if (error) raise('upsertSettings', error);
 }
@@ -307,13 +323,15 @@ export async function upsertSimproConfig(c: SimproConfig): Promise<void> {
 // ─── SEED ────────────────────────────────────────────────────────────────────
 
 /**
- * Wipes and re-seeds all tables with demo data.
- * Called by the "Reset to Demo" button and by importData.
+ * Wholesale replace every entity table with the provided arrays.
+ * Used by `importData` (the JSON restore flow). Settings and Simpro config
+ * are also re-initialised to known defaults so an import lands a fully
+ * consistent state.
  *
  * Every op checks `.error` and raises through the standard helper so partial
  * failures surface as exceptions instead of silent corruption.
  */
-export async function seedDatabase(
+export async function replaceAllData(
   staff: Staff[],
   jobs: Job[],
   scheduleEntries: ScheduleEntry[],

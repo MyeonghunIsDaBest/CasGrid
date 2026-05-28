@@ -36,6 +36,14 @@ export interface Job {
   status: JobStatus;
   notes: string;
   colour: string;
+  // Running-time tracker: how long the job has been actively running.
+  // `runningStartedAt` is set whenever the job is in an active status
+  // (unscheduled/scheduled/inProgress); null when paused (completed/onHold).
+  // `runningTimeMs` is the accumulated ms from previous active runs.
+  // Optional so legacy rows / demo data without the fields still validate;
+  // the runningTime helpers handle the undefined case as "no time accumulated".
+  runningStartedAt?: string | null;
+  runningTimeMs?: number;
 }
 
 export interface ScheduleEntry {
@@ -78,6 +86,17 @@ export interface SimproFieldMapping {
   statusField: string;       // default: 'Status'
 }
 
+export type SyncTable = 'staff' | 'jobs' | 'schedule_entries' | 'staff_events' | 'app_settings' | 'simpro_config';
+export type EventKind = 'add' | 'update' | 'delete' | 'load';
+
+export interface RecentEvent {
+  kind: EventKind;
+  entity: SyncTable;
+  label: string;
+  at: number;
+  count?: number; // when consecutive same-entity events coalesce
+}
+
 export interface AppState {
   staff: Staff[];
   jobs: Job[];
@@ -85,12 +104,23 @@ export interface AppState {
   staffEvents: StaffEvent[];
   settings: AppSettings;
   simproConfig: SimproConfig;
+  // Realtime telemetry — UI-only, not persisted.
+  lastSyncAt: number | null;
+  lastEventAt: Partial<Record<SyncTable, number>>;
+  recentEvents: RecentEvent[];
 }
 
 export interface AppSettings {
   overrideOverbooking: boolean;
   workingDaysPerWeek: number[];
   currentWeekOffset: number;
+  /**
+   * Per-week capacity goals shown above the Timeline. `weeklyBaseline` is
+   * "what we currently expect to schedule" (e.g. 240h); `weeklyStretch` is
+   * the target to push toward (e.g. 350h). Optional — JS defaults to
+   * {240, 350} so the app works pre-migration.
+   */
+  capacityTargets?: { weeklyBaseline: number; weeklyStretch: number };
 }
 
 // Derived types

@@ -1,10 +1,14 @@
 // @ts-nocheck
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Edit2, X, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useJobModal } from '../context/JobModalContext';
-import { getWeekWorkingDays, toDateString, formatDayShort, formatDayNum, formatMonthYear, isToday } from '../utils/dateUtils';
+import { getWeekWorkingDays, toDateString, formatDayShort, formatDayNum, isToday } from '../utils/dateUtils';
 import { computeDailyLoads, getUtilisationBgClass, getEffectiveAvailable, generateId } from '../utils/schedulingEngine';
+import { LiveBadge } from './LiveBadge';
+import { WeeklyPlannerCellEditor } from './WeeklyPlannerCellEditor';
+import { useNow } from '../utils/useNow';
+import { getRunningTimeMs, formatRunningTime } from '../utils/runningTime';
 
 export function WeeklyPlanner() {
   const { state, updateSettings, updateScheduleEntry, deleteScheduleEntry } = useApp();
@@ -16,8 +20,34 @@ export function WeeklyPlanner() {
   const dayStrings = days.map(toDateString);
   const billableStaff = staff.filter(s => s.active && s.isBillable);
   const dailyLoads = computeDailyLoads(dayStrings, billableStaff, scheduleEntries, jobs, staffEvents);
-  const [editingCell, setEditingCell] = useState(null);
-  const [editValue, setEditValue] = useState('');
+
+  // Tick every second so the Week-column live running-time counter advances
+  // visibly while any of the staff's assigned jobs are in a running state.
+  const now = useNow(1000);
+
+  // For a given staff: sum of getRunningTimeMs(job, now) across every job
+  // the staff is assigned to that's currently in an active status with a
+  // running clock. Capped at their week's scheduled hours so the number
+  // doesn't pass what was planned.
+  function liveRunningMsFor(member: typeof billableStaff[number], capHours: number) {
+    const capMs = capHours * 3_600_000;
+    let acc = 0;
+    for (const j of jobs) {
+      if (j.status === 'completed' || j.status === 'onHold') continue;
+      if (!j.assignedStaffIds.includes(member.id)) continue;
+      acc += getRunningTimeMs(j, new Date(now));
+    }
+    return Math.min(acc, capMs);
+  }
+
+  // The popover editor — one instance, switches target cell as the user
+  // clicks around. `anchor` is screen-space so the popover follows scroll.
+  const [editorCell, setEditorCell] = useState<{
+    date: string;
+    staffId: string;
+    initial: { originalId?: string; jobId: string; hours: number }[];
+    anchor: { top: number; left: number } | null;
+  } | null>(null);
 
   const weekLabel = days.length > 0
     ? `Week of ${days[0].toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
@@ -32,28 +62,60 @@ export function WeeklyPlanner() {
     return getCellEntries(date, staffId).reduce((s, e) => s + e.hours, 0);
   }
 
-  function commitEdit(date, staffId) {
-    const newHours = parseFloat(editValue);
-    if (isNaN(newHours) || newHours < 0) { setEditingCell(null); return; }
-    const cellEntries = getCellEntries(date, staffId);
-    const totalExisting = cellEntries.reduce((s, e) => s + e.hours, 0);
-    if (Math.abs(newHours - totalExisting) < 0.01) { setEditingCell(null); return; }
-    cellEntries.filter(e => !e.isManualOverride).forEach(e => deleteScheduleEntry(e.id));
-    if (newHours > 0) {
-      const firstEntry = cellEntries[0];
-      if (firstEntry?.jobId) {
-        updateScheduleEntry({ id: generateId(), jobId: firstEntry.jobId, staffId, date, hours: newHours, isManualOverride: true });
-      }
-    }
-    setEditingCell(null);
+  function openCellEditor(e, date, staffId) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const initial = getCellEntries(date, staffId).map(en => ({
+      originalId: en.id, jobId: en.jobId, hours: en.hours,
+    }));
+    setEditorCell({
+      date,
+      staffId,
+      initial,
+      anchor: { top: rect.bottom + 4, left: rect.left },
+    });
   }
+
+  // Replace-all-in-cell: delete every existing entry in the cell (manual or
+  // auto), then insert one manual entry per non-zero row. This fixes all
+  // four cell-edit bugs at once (silent fail / multi-job collapse / dup /
+  // zero-doesn't-clear).
+  function commitCellEntries(
+    date: string,
+    staffId: string,
+    rows: { jobId: string; hours: number }[],
+  ) {
+    const existing = scheduleEntries.filter(
+      e => e.date === date && e.staffId === staffId,
+    );
+    existing.forEach(en => deleteScheduleEntry(en.id));
+
+    rows
+      .filter(r => r.hours > 0 && r.jobId)
+      .forEach(r => {
+        updateScheduleEntry({
+          id: generateId(),
+          jobId: r.jobId,
+          staffId,
+          date,
+          hours: r.hours,
+          isManualOverride: true,
+        });
+      });
+
+    setEditorCell(null);
+  }
+
+  const editorStaff = editorCell ? staff.find(s => s.id === editorCell.staffId) : null;
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
         <div>
-          <h2 className="font-semibold text-slate-800 text-sm">Weekly Planner</h2>
-          <p className="text-xs text-slate-500">{weekLabel} · click hours to edit · 🎓 = trade school</p>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-slate-800 text-sm">Weekly Planner</h2>
+            <LiveBadge compact />
+          </div>
+          <p className="text-xs text-slate-500">{weekLabel} · click a cell to allocate hours · 🎓 = trade school</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => updateSettings({ currentWeekOffset: weekOffset - 1 })}
@@ -86,6 +148,8 @@ export function WeeklyPlanner() {
             {billableStaff.map(member => {
               const weekTotal = dayStrings.reduce((s, d) => s + getCellHours(d, member.id), 0);
               const weekAvail = dayStrings.reduce((s, d) => s + getEffectiveAvailable(member, d, staffEvents), 0);
+              const weekRatio = weekAvail > 0 ? weekTotal / weekAvail : weekTotal > 0 ? 1.5 : 0;
+              const weekDotClass = getUtilisationBgClass(weekRatio);
 
               return (
                 <tr key={member.id} className="border-b border-slate-50 hover:bg-slate-50/50">
@@ -104,8 +168,6 @@ export function WeeklyPlanner() {
                     const hours = getCellHours(dateStr, member.id);
                     const avail = getEffectiveAvailable(member, dateStr, staffEvents);
                     const ratio = avail > 0 ? hours / avail : hours > 0 ? 1.5 : 0;
-                    const cellKey = `${dateStr}-${member.id}`;
-                    const isEditing = editingCell === cellKey;
                     const cellEntries = getCellEntries(dateStr, member.id);
 
                     // Check for staff events on this day
@@ -118,7 +180,8 @@ export function WeeklyPlanner() {
                       return (
                         <td key={dateStr} className={`py-1 px-1 text-center ${isToday(day) ? 'bg-amber-50/40' : ''}`}>
                           <div className="rounded-md px-1 py-1.5 flex flex-col items-center gap-0.5"
-                            style={{ backgroundColor: ev.colour + '22', border: `1px solid ${ev.colour}44` }}>
+                            style={{ backgroundColor: ev.colour + '22', border: `1px solid ${ev.colour}44` }}
+                            title={`${ev.label || ev.type} · ${ev.hours}h blocked`}>
                             <span className="text-[8px] font-bold" style={{ color: ev.colour }}>
                               {ev.type === 'tradeSchool' ? '🎓' : ev.type === 'leave' ? '🌴' : ev.type === 'sick' ? '🤒' : '📅'}
                             </span>
@@ -130,68 +193,91 @@ export function WeeklyPlanner() {
                       );
                     }
 
+                    // Build the cell tooltip from current entries.
+                    const cellTitle = cellEntries.length > 0
+                      ? cellEntries.map(e => {
+                          const j = jobs.find(jb => jb.id === e.jobId);
+                          return `${j?.jobName ?? 'Job'} · ${e.hours}h`;
+                        }).join(' · ')
+                      : 'Click to allocate hours';
+
                     return (
                       <td key={dateStr} className={`py-1 px-1 text-center ${isToday(day) ? 'bg-amber-50/40' : ''}`}>
-                        {isEditing ? (
-                          <div className="flex items-center gap-0.5 justify-center">
-                            <input type="number" value={editValue}
-                              onChange={e => setEditValue(e.target.value)}
-                              className="w-11 border border-amber-400 rounded text-center text-xs py-0.5 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                              autoFocus
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') commitEdit(dateStr, member.id);
-                                if (e.key === 'Escape') setEditingCell(null);
-                              }}
-                            />
-                            <button onClick={() => commitEdit(dateStr, member.id)}><Check size={11} className="text-green-600"/></button>
-                            <button onClick={() => setEditingCell(null)}><X size={11} className="text-red-400"/></button>
-                          </div>
-                        ) : (
-                          <div className="group relative">
-                            {hours > 0 ? (
-                              <div>
-                                <div className="flex gap-0.5 justify-center mb-0.5">
-                                  {cellEntries.slice(0, 4).map(entry => {
-                                    const j = jobs.find(jb => jb.id === entry.jobId);
-                                    return (
-                                      <div key={entry.id}
-                                        className="h-1 rounded-full flex-1 max-w-[10px] cursor-pointer hover:opacity-70"
-                                        style={{ backgroundColor: j?.colour ?? '#94a3b8' }}
-                                        title={j?.jobName}
-                                        onClick={() => j && openJob(j.id)}
-                                      />
-                                    );
-                                  })}
-                                </div>
-                                <div
-                                  className={`inline-flex items-center justify-center w-9 h-6 rounded-md text-white text-[10px] font-bold cursor-pointer hover:opacity-80 ${getUtilisationBgClass(ratio)}`}
-                                  onClick={() => { setEditingCell(cellKey); setEditValue(String(hours)); }}
-                                  title="Click to edit hours"
-                                >
-                                  {hours % 1 === 0 ? hours : hours.toFixed(1)}h
-                                </div>
-                                {isPartialBlock && (
-                                  <div className="text-[7px] text-amber-500 font-bold mt-0.5">partial</div>
-                                )}
+                        <div className="group relative" title={cellTitle}>
+                          {hours > 0 ? (
+                            <button
+                              onClick={e => openCellEditor(e, dateStr, member.id)}
+                              className="w-full"
+                            >
+                              <div className="flex gap-0.5 justify-center mb-0.5">
+                                {cellEntries.slice(0, 4).map(entry => {
+                                  const j = jobs.find(jb => jb.id === entry.jobId);
+                                  return (
+                                    <span key={entry.id}
+                                      className="h-1 rounded-full flex-1 max-w-[10px]"
+                                      style={{ backgroundColor: j?.colour ?? '#94a3b8' }}
+                                    />
+                                  );
+                                })}
                               </div>
-                            ) : (
                               <div
-                                className="inline-flex items-center justify-center w-9 h-6 rounded-md text-slate-300 text-[10px] border border-dashed border-slate-200 group-hover:border-amber-300 group-hover:text-amber-400 cursor-pointer"
-                                onClick={() => { setEditingCell(cellKey); setEditValue('0'); }}
-                              >—</div>
-                            )}
-                          </div>
-                        )}
+                                className={`inline-flex items-center justify-center w-9 h-6 rounded-md text-white text-[10px] font-bold hover:opacity-80 ${getUtilisationBgClass(ratio)}`}
+                              >
+                                {hours % 1 === 0 ? hours : hours.toFixed(1)}h
+                              </div>
+                              {isPartialBlock && (
+                                <div className="text-[7px] text-amber-500 font-bold mt-0.5">partial</div>
+                              )}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={e => openCellEditor(e, dateStr, member.id)}
+                              className="inline-flex items-center justify-center w-9 h-6 rounded-md text-slate-300 text-[10px] border border-dashed border-slate-200 group-hover:border-amber-300 group-hover:text-amber-400"
+                            >—</button>
+                          )}
+                        </div>
                       </td>
                     );
                   })}
 
                   <td className="py-1.5 px-3 text-center">
-                    <div className="text-xs font-bold text-slate-700">{Math.round(weekTotal*10)/10}h</div>
-                    <div className="text-[9px] text-slate-400">/ {weekAvail.toFixed(0)}h</div>
-                    {weekAvail < member.dailyAvailableHours * days.length && (
-                      <div className="text-[8px] text-indigo-500 font-bold">-events</div>
-                    )}
+                    {(() => {
+                      const liveMs = liveRunningMsFor(member, weekTotal);
+                      const hasSchedule = weekTotal > 0;
+                      const hasLive = liveMs > 0;
+                      return (
+                        <>
+                          {/* Top line: live running-time counter for this staff,
+                              capped at their weekly scheduled hours. Ticks every
+                              second while any of their assigned jobs is active. */}
+                          <div className="flex items-center justify-center gap-1.5">
+                            <span
+                              className={`inline-block w-1.5 h-1.5 rounded-full ${
+                                hasLive ? 'bg-emerald-500 animate-pulse' : weekDotClass
+                              }`}
+                              aria-hidden
+                            />
+                            <div
+                              className={`text-xs font-bold tabular-nums ${
+                                hasLive ? 'text-emerald-600' : hasSchedule ? 'text-slate-700' : 'text-slate-400'
+                              }`}
+                              title={hasLive ? 'Live running-time across this staff\'s active jobs (capped at their weekly schedule)' : undefined}
+                            >
+                              {hasSchedule ? formatRunningTime(liveMs) : '—'}
+                            </div>
+                          </div>
+                          <div className="text-[9px] text-slate-400 tabular-nums">
+                            of {Math.round(weekTotal * 10) / 10}h scheduled
+                          </div>
+                          <div className="text-[8px] text-slate-300 tabular-nums">
+                            {weekAvail.toFixed(0)}h available
+                          </div>
+                          {weekAvail < member.dailyAvailableHours * days.length && (
+                            <div className="text-[8px] text-indigo-500 font-bold">-events</div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </td>
                 </tr>
               );
@@ -202,6 +288,21 @@ export function WeeklyPlanner() {
 
       {billableStaff.length === 0 && (
         <div className="py-12 text-center text-slate-400 text-sm">No active billable staff.</div>
+      )}
+
+      {/* Per-cell editor popover */}
+      {editorCell && editorStaff && (
+        <WeeklyPlannerCellEditor
+          date={editorCell.date}
+          staff={editorStaff}
+          initialRows={editorCell.initial}
+          jobs={jobs}
+          staffEvents={staffEvents}
+          overrideOverbooking={settings.overrideOverbooking}
+          anchor={editorCell.anchor}
+          onCommit={rows => commitCellEntries(editorCell.date, editorCell.staffId, rows)}
+          onClose={() => setEditorCell(null)}
+        />
       )}
     </div>
   );

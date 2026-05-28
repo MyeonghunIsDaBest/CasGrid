@@ -215,7 +215,11 @@ export function TradeSchoolPanel() {
                     {format(new Date(ev.date + 'T00:00:00'), 'EEE d MMM yyyy')} · {ev.hours}h blocked
                   </div>
                 </div>
-                <button onClick={() => deleteStaffEvent(ev.id)}
+                <button
+                  onClick={() => {
+                    if (confirm(`Delete this event (${ev.label || ev.type})?`)) deleteStaffEvent(ev.id);
+                  }}
+                  aria-label="Delete event"
                   className="p-1 hover:bg-red-50 text-slate-300 hover:text-red-500 rounded transition-colors flex-shrink-0">
                   <Trash2 size={13} />
                 </button>

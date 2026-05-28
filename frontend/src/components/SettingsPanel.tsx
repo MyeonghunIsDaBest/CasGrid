@@ -1,10 +1,10 @@
 import { useRef } from 'react';
 import { motion } from 'framer-motion';
-import { Download, Upload, RefreshCw, Shield, Calendar, Zap } from 'lucide-react';
+import { Download, Upload, Shield, Calendar, Zap } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export function SettingsPanel() {
-  const { state, updateSettings, resetDemo, exportData, importData } = useApp();
+  const { state, updateSettings, exportData, importData } = useApp();
   const { settings } = state;
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -47,7 +47,49 @@ export function SettingsPanel() {
           </div>
         </label>
 
-        <div className="pt-2 border-t border-slate-100">
+        <div className="pt-3 border-t border-slate-100 space-y-3">
+          <div>
+            <div className="text-sm font-medium text-slate-800 mb-1">Weekly capacity</div>
+            <p className="text-xs text-slate-500 mb-2">
+              Baseline = the team-hours you're currently expected to schedule.
+              Stretch = the target you're pushing toward. Shown above the Timeline.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs text-slate-600">
+                <span className="block mb-1">Baseline (h/week)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={5}
+                  value={settings.capacityTargets?.weeklyBaseline ?? 240}
+                  onChange={e => updateSettings({
+                    capacityTargets: {
+                      weeklyBaseline: parseInt(e.target.value, 10) || 0,
+                      weeklyStretch:  settings.capacityTargets?.weeklyStretch ?? 350,
+                    },
+                  })}
+                  className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </label>
+              <label className="text-xs text-slate-600">
+                <span className="block mb-1">Stretch target (h/week)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={5}
+                  value={settings.capacityTargets?.weeklyStretch ?? 350}
+                  onChange={e => updateSettings({
+                    capacityTargets: {
+                      weeklyBaseline: settings.capacityTargets?.weeklyBaseline ?? 240,
+                      weeklyStretch:  parseInt(e.target.value, 10) || 0,
+                    },
+                  })}
+                  className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </label>
+            </div>
+          </div>
+
           <p className="text-xs text-slate-500">
             <strong>Working days:</strong> Monday to Friday (fixed). Future version will support custom working days and public holiday exclusions.
           </p>
@@ -61,7 +103,8 @@ export function SettingsPanel() {
         </h3>
 
         <p className="text-xs text-slate-500">
-          All data is saved automatically to your browser's local storage. Use export/import to back up or transfer your schedule.
+          All data lives in your Supabase project and syncs live across every device.
+          Use export/import to back up or transfer your schedule.
         </p>
 
         <div className="flex flex-wrap gap-2">
@@ -77,15 +120,6 @@ export function SettingsPanel() {
             className="flex items-center gap-2 px-4 py-2 text-sm bg-slate-50 text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors font-medium"
           >
             <Upload size={14} /> Import JSON
-          </button>
-
-          <button
-            onClick={() => {
-              if (confirm('Reset all data to demo? This cannot be undone.')) resetDemo();
-            }}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-orange-50 text-orange-700 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors font-medium"
-          >
-            <RefreshCw size={14} /> Reset to Demo
           </button>
         </div>
 

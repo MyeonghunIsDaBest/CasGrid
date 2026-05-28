@@ -10,100 +10,101 @@ interface KPICardsProps {
   overbookedDays: number;
 }
 
+type Tone = 'slate' | 'amber' | 'emerald' | 'orange' | 'red';
+
 interface KPICard {
   label: string;
   value: string | number;
   sub?: string;
   icon: React.ReactNode;
-  colour: string;
-  textColour: string;
-  borderColour: string;
+  tone: Tone;
 }
+
+const TONE: Record<Tone, { chipBg: string; chipText: string; valueText: string; subText: string }> = {
+  slate:   { chipBg: 'bg-slate-100',   chipText: 'text-slate-600',   valueText: 'text-slate-900',   subText: 'text-slate-500' },
+  amber:   { chipBg: 'bg-amber-100',   chipText: 'text-amber-700',   valueText: 'text-slate-900',   subText: 'text-amber-600' },
+  emerald: { chipBg: 'bg-emerald-100', chipText: 'text-emerald-700', valueText: 'text-slate-900',   subText: 'text-emerald-600' },
+  orange:  { chipBg: 'bg-orange-100',  chipText: 'text-orange-700',  valueText: 'text-slate-900',   subText: 'text-orange-600' },
+  red:     { chipBg: 'bg-red-100',     chipText: 'text-red-700',     valueText: 'text-slate-900',   subText: 'text-red-600' },
+};
 
 export function KPICards({
   totalAvailable, allocated, remaining, utilisationPct, jobsAtRisk, overbookedDays
 }: KPICardsProps) {
-  const utilColour =
+  const utilTone: Tone =
     utilisationPct < 75 ? 'emerald' :
     utilisationPct < 95 ? 'amber' : 'red';
 
   const cards: KPICard[] = [
     {
-      label: 'Available This Week',
+      label: 'Available',
       value: `${totalAvailable}h`,
       sub: 'Total capacity',
-      icon: <Clock size={20} />,
-      colour: 'bg-slate-50',
-      textColour: 'text-slate-700',
-      borderColour: 'border-slate-200',
+      icon: <Clock size={14} />,
+      tone: 'slate',
     },
     {
-      label: 'Allocated This Week',
+      label: 'Allocated',
       value: `${Math.round(allocated)}h`,
       sub: `${remaining >= 0 ? remaining.toFixed(1) : 0}h remaining`,
-      icon: <TrendingUp size={20} />,
-      colour: 'bg-amber-50',
-      textColour: 'text-amber-700',
-      borderColour: 'border-amber-200',
+      icon: <TrendingUp size={14} />,
+      tone: 'amber',
     },
     {
       label: 'Utilisation',
       value: `${utilisationPct}%`,
       sub: utilisationPct < 75 ? 'Under capacity' : utilisationPct < 95 ? 'Healthy load' : 'Near limit',
-      icon: <Zap size={20} />,
-      colour: utilColour === 'emerald' ? 'bg-emerald-50' : utilColour === 'amber' ? 'bg-amber-50' : 'bg-red-50',
-      textColour: utilColour === 'emerald' ? 'text-emerald-700' : utilColour === 'amber' ? 'text-amber-700' : 'text-red-700',
-      borderColour: utilColour === 'emerald' ? 'border-emerald-200' : utilColour === 'amber' ? 'border-amber-200' : 'border-red-200',
+      icon: <Zap size={14} />,
+      tone: utilTone,
     },
     {
       label: 'Jobs At Risk',
       value: jobsAtRisk,
       sub: jobsAtRisk === 0 ? 'All on track' : 'Need attention',
-      icon: <AlertTriangle size={20} />,
-      colour: jobsAtRisk > 0 ? 'bg-orange-50' : 'bg-emerald-50',
-      textColour: jobsAtRisk > 0 ? 'text-orange-700' : 'text-emerald-700',
-      borderColour: jobsAtRisk > 0 ? 'border-orange-200' : 'border-emerald-200',
+      icon: <AlertTriangle size={14} />,
+      tone: jobsAtRisk > 0 ? 'orange' : 'emerald',
     },
     {
-      label: 'Overbooked Days',
+      label: 'Overbooked',
       value: overbookedDays,
       sub: overbookedDays === 0 ? 'No overloads' : 'Adjust schedule',
-      icon: <CalendarX size={20} />,
-      colour: overbookedDays > 0 ? 'bg-red-50' : 'bg-emerald-50',
-      textColour: overbookedDays > 0 ? 'text-red-700' : 'text-emerald-700',
-      borderColour: overbookedDays > 0 ? 'border-red-200' : 'border-emerald-200',
+      icon: <CalendarX size={14} />,
+      tone: overbookedDays > 0 ? 'red' : 'emerald',
     },
     {
       label: 'On Track',
       value: `${Math.max(0, 100 - utilisationPct)}%`,
       sub: 'Buffer remaining',
-      icon: <CheckCircle size={20} />,
-      colour: 'bg-slate-50',
-      textColour: 'text-slate-700',
-      borderColour: 'border-slate-200',
+      icon: <CheckCircle size={14} />,
+      tone: 'emerald',
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-      {cards.map((card, i) => (
-        <motion.div
-          key={card.label}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: i * 0.05 }}
-          className={`rounded-xl border p-4 ${card.colour} ${card.borderColour}`}
-        >
-          <div className={`flex items-center gap-2 mb-2 ${card.textColour} opacity-70`}>
-            {card.icon}
-            <span className="text-xs font-medium uppercase tracking-wide">{card.label}</span>
-          </div>
-          <div className={`text-2xl font-bold ${card.textColour}`}>{card.value}</div>
-          {card.sub && (
-            <div className={`text-xs mt-1 ${card.textColour} opacity-60`}>{card.sub}</div>
-          )}
-        </motion.div>
-      ))}
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+      {cards.map((card, i) => {
+        const t = TONE[card.tone];
+        return (
+          <motion.div
+            key={card.label}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.04 }}
+            className="bg-white rounded-xl border border-slate-200 px-3 py-2.5 flex items-start gap-2.5"
+          >
+            <div className={`flex-shrink-0 w-7 h-7 rounded-lg ${t.chipBg} ${t.chipText} flex items-center justify-center`}>
+              {card.icon}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 leading-tight">{card.label}</div>
+              <div className={`text-lg font-bold leading-tight mt-0.5 ${t.valueText}`}>{card.value}</div>
+              {card.sub && (
+                <div className={`text-[10px] mt-0.5 truncate ${t.subText}`}>{card.sub}</div>
+              )}
+            </div>
+          </motion.div>
+        );
+      })}
     </div>
   );
 }

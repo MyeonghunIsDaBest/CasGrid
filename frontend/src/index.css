@@ -80,3 +80,16 @@
     background-position: -11px -11px;
   }
 }
+
+/* Thin, theme-friendly scrollbar for inner-scrolling card content
+   (e.g. StaffUtilisationChart with many billable staff). */
+.custom-thin-scrollbar { scrollbar-width: thin; scrollbar-color: rgb(203 213 225 / 0.8) transparent; }
+.custom-thin-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-thin-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-thin-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgb(203 213 225 / 0.8);
+  border-radius: 9999px;
+}
+.custom-thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(148 163 184 / 0.9);
+}

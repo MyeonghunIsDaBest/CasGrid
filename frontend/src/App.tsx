@@ -6,6 +6,8 @@ import { Zap, LayoutDashboard, Briefcase, Users, GitBranch, Settings, Menu, X, G
 import { AppProvider, useApp } from './context/AppContext';
 import { JobModalProvider, useJobModal } from './context/JobModalContext';
 import { KPICards } from './components/KPICards';
+import { RealtimeStatus } from './components/RealtimeStatus';
+import { EmptyState } from './components/EmptyState';
 import { WeeklyPlanner } from './components/WeeklyPlanner';
 import { JobsPanel } from './components/JobsPanel';
 import { StaffPanel } from './components/StaffPanel';
@@ -141,24 +143,29 @@ function AppShell() {
             exit={{ opacity:0 }} transition={{ duration:0.12 }}>
 
             {activeTab === 'dashboard' && (
-              <div className="space-y-5">
+              <div className="space-y-4">
+                {state.staff.length === 0 && state.jobs.length === 0 && (
+                  <EmptyState
+                    onAddStaff={() => setActiveTab('staff')}
+                    onAddJob={() => setActiveTab('jobs')}
+                  />
+                )}
                 <KPICards
                   totalAvailable={metrics.totalAvailableHours} allocated={metrics.allocatedHours}
                   remaining={metrics.remainingCapacity} utilisationPct={metrics.utilisationPct}
                   jobsAtRisk={metrics.jobsAtRisk} overbookedDays={metrics.overbookedDays}
                 />
+                <RealtimeStatus />
                 <WeeklyPlanner />
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   <CapacityChart />
+                  <UpcomingDeadlines />
                   <StaffUtilisationChart />
                 </div>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                  <div className="lg:col-span-2"><Timeline /></div>
-                  <UpcomingDeadlines />
-                </div>
+                <Timeline />
               </div>
             )}
-            {activeTab === 'jobs' && <div className="max-w-4xl"><JobsPanel /></div>}
+            {activeTab === 'jobs' && <div className="max-w-4xl mx-auto"><JobsPanel /></div>}
             {activeTab === 'staff' && <StaffPanel />}
             {activeTab === 'timeline' && (
               <div className="space-y-5">

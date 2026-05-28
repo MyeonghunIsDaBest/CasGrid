@@ -6,13 +6,42 @@ import { useJobModal } from '../context/JobModalContext';
 import { toDateString, isToday } from '../utils/dateUtils';
 import { isJobAtRisk, getRemainingHours } from '../utils/schedulingEngine';
 import { AlertTriangle, GripHorizontal, Clock, Users } from 'lucide-react';
+import { StaffAllocationLayer } from './timeline/StaffAllocationLayer';
+import { WeeklyCapacityHeader } from './timeline/WeeklyCapacityHeader';
+import { StaffHoverCard } from './StaffHoverCard';
+import { StaffListHoverCard } from './StaffListHoverCard';
 
 const DAYS_TO_SHOW = 49; // 7 weeks
+
+/**
+ * Build a stable map of staffId → 1-or-2-letter initials, matching the
+ * convention used by JobDetailModal's Default Assigned Staff chips:
+ *   single-word name → first letter
+ *   multi-word name  → first letter of first + first letter of last
+ * If two single-letter initials would collide (e.g. "Isaac" + "Iona" → "I"
+ * twice), the colliders fall back to the first two letters of their name
+ * ("IS", "IO") so every chip on screen is unique.
+ */
+function computeInitials(staffList) {
+  const out = {};
+  for (const s of staffList) {
+    out[s.id] = s.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  }
+  const counts = {};
+  for (const v of Object.values(out)) counts[v] = (counts[v] ?? 0) + 1;
+  for (const s of staffList) {
+    if (out[s.id].length === 1 && counts[out[s.id]] > 1) {
+      out[s.id] = s.name.slice(0, 2).toUpperCase();
+    }
+  }
+  return out;
+}
 
 export function Timeline() {
   const { state, updateJob } = useApp();
   const { openJob } = useJobModal();
-  const { jobs, staff, scheduleEntries, staffEvents } = state;
+  const { jobs, staff, scheduleEntries, staffEvents, settings } = state;
+  const capacityTargets = settings.capacityTargets ?? { weeklyBaseline: 240, weeklyStretch: 350 };
 
   const today = useMemo(() => new Date(), []);
   const days = useMemo(
@@ -25,6 +54,16 @@ export function Timeline() {
   const [draggingJobId, setDraggingJobId] = useState(null);
   const [liveOffsets, setLiveOffsets] = useState({});
   const [isDragging, setIsDragging] = useState(false);
+
+  // Click-to-highlight: one staff id at a time, or null. Pure UI filter —
+  // dims non-matching job bars, doesn't mutate data.
+  const [staffFilter, setStaffFilter] = useState(null);
+
+  const billableStaff = useMemo(
+    () => staff.filter(s => s.active && s.isBillable),
+    [staff],
+  );
+  const initials = useMemo(() => computeInitials(billableStaff), [billableStaff]);
 
   const totalDays = days.length;
   const startDate = days[0];
@@ -126,7 +165,18 @@ export function Timeline() {
     setTimeout(() => setIsDragging(false), 50);
   }
 
-  const activeJobs = jobs.filter(j => j.status !== 'completed');
+  // Active jobs only. When a staff filter is on, lift bars assigned to that
+  // staff to the top so they're visible without scrolling. Non-matching bars
+  // stay rendered (just dimmed) so the user keeps full context.
+  const activeJobs = useMemo(() => {
+    const all = jobs.filter(j => j.status !== 'completed');
+    if (!staffFilter) return all;
+    return [...all].sort((a, b) => {
+      const aHas = a.assignedStaffIds.includes(staffFilter) ? 0 : 1;
+      const bHas = b.assignedStaffIds.includes(staffFilter) ? 0 : 1;
+      return aHas - bHas;
+    });
+  }, [jobs, staffFilter]);
   const todayPct = dateToPct(today);
 
   // ─── Per-job hours summary ───
@@ -154,12 +204,69 @@ export function Timeline() {
         </div>
       </div>
 
+      {/* Team legend — colored initial chip per active billable staff. Click to
+          filter the bars below; click again (or "Clear") to reset. The chip's
+          initial matches what's shown inside each job bar, so the bar dots
+          become directly identifiable instead of relying on color memory. */}
+      {billableStaff.length > 0 && (
+        <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-slate-100 bg-slate-50/40 overflow-x-auto">
+          <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide flex-shrink-0 mr-1">Team</span>
+          {billableStaff.map(s => {
+            const isFiltered = staffFilter === s.id;
+            const isDimmed = staffFilter && !isFiltered;
+            return (
+              <StaffHoverCard key={s.id} staff={s}>
+                <button
+                  onClick={() => setStaffFilter(f => f === s.id ? null : s.id)}
+                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold flex-shrink-0 transition-all ring-1 ${
+                    isFiltered
+                      ? 'text-white ring-transparent'
+                      : isDimmed
+                        ? 'opacity-40 ring-slate-200 text-slate-600 bg-white hover:opacity-70'
+                        : 'ring-slate-200 text-slate-700 bg-white hover:ring-slate-300'
+                  }`}
+                  style={isFiltered ? { backgroundColor: s.colour } : undefined}
+                >
+                  <span
+                    className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-[7px] font-bold text-white ring-1 ring-white/60"
+                    style={{ backgroundColor: s.colour }}
+                  >
+                    {initials[s.id] ?? s.name[0]}
+                  </span>
+                  {s.name.split(' ')[0]}
+                </button>
+              </StaffHoverCard>
+            );
+          })}
+          {staffFilter && (
+            <button
+              onClick={() => setStaffFilter(null)}
+              className="ml-auto text-[10px] text-slate-500 hover:text-slate-800 px-2 py-0.5 rounded hover:bg-slate-100 flex-shrink-0"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="overflow-x-auto">
-        <div className="min-w-[780px]">
+        <div className="min-w-[960px]">
+
+          {/* ── Weekly capacity header (Layer C) ── */}
+          <WeeklyCapacityHeader
+            days={days}
+            totalDays={totalDays}
+            weeks={weeks}
+            scheduleEntries={scheduleEntries}
+            jobs={jobs}
+            staff={staff}
+            staffEvents={staffEvents}
+            capacityTargets={capacityTargets}
+          />
 
           {/* ── Week header ── */}
           <div className="flex border-b border-slate-100">
-            <div className="w-60 flex-shrink-0 border-r border-slate-100 px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase tracking-wide">
+            <div className="w-60 flex-shrink-0 border-r border-slate-100 px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase tracking-wide sticky left-0 bg-white z-10">
               Job / Client
             </div>
             <div className="flex-1 flex">
@@ -174,7 +281,7 @@ export function Timeline() {
 
           {/* ── Day header with DAY NAME ── */}
           <div className="flex border-b border-slate-200" ref={trackRef}>
-            <div className="w-60 flex-shrink-0 border-r border-slate-100 bg-slate-50" />
+            <div className="w-60 flex-shrink-0 border-r border-slate-100 bg-slate-50 sticky left-0 z-10" />
             <div className="flex-1 flex">
               {days.map((day, i) => {
                 const isWknd = day.getDay() === 0 || day.getDay() === 6;
@@ -215,13 +322,19 @@ export function Timeline() {
               .map(s => s.name.split(' ')[0])
               .join(', ');
 
+            // Dim non-matching rows when a staff filter is active. The row stays
+            // rendered (still useful for context) but visually recedes.
+            const filterDim = staffFilter && !job.assignedStaffIds.includes(staffFilter);
+
             return (
               <div key={job.id}
-                className="flex items-stretch border-b border-slate-50 hover:bg-slate-50/40 group"
+                className={`flex items-stretch border-b border-slate-50 hover:bg-slate-50/40 group transition-opacity ${
+                  filterDim ? 'opacity-40 grayscale-[40%]' : ''
+                }`}
                 style={{ minHeight: 56 }}
               >
                 {/* ─ Job label ─ */}
-                <div className="w-60 flex-shrink-0 border-r border-slate-100 px-3 py-2 cursor-pointer hover:bg-amber-50/40 transition-colors"
+                <div className="w-60 flex-shrink-0 border-r border-slate-100 px-3 py-2 cursor-pointer hover:bg-amber-50/40 transition-colors sticky left-0 bg-white group-hover:bg-amber-50/40 z-10"
                   onClick={() => openJob(job.id)}>
                   <div className="flex items-start gap-2">
                     <div className="w-2 h-2 rounded-full mt-1 flex-shrink-0" style={{ backgroundColor: job.colour }} />
@@ -316,16 +429,53 @@ export function Timeline() {
                     </div>
 
                     {/* Centre drag + click */}
-                    <div className="flex-1 flex items-center justify-center gap-1 cursor-grab active:cursor-grabbing px-3 min-w-0 z-20"
+                    <div className="flex-1 flex items-center gap-1 cursor-grab active:cursor-grabbing px-3 min-w-0 z-20"
                       onPointerDown={e => startDrag(e, job, 'move')}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
                       onClick={() => { if (!isDragging) openJob(job.id); }}
                     >
                       <GripHorizontal size={9} style={{ color: job.colour, opacity: 0.6, flexShrink: 0 }} />
-                      <span className="text-[9px] font-bold truncate" style={{ color: job.colour }}>
+                      <span className="flex-1 text-[9px] font-bold truncate" style={{ color: job.colour }}>
                         {job.jobName}
                       </span>
+                      {/* Staff chips — colored circle with the staff's initial(s).
+                          Each chip is wrapped in StaffHoverCard for a rich detail
+                          popover. pointerdown still bubbles to the parent drag
+                          handler, so the bar remains fully draggable. */}
+                      {(() => {
+                        const assigned = staff.filter(s => job.assignedStaffIds.includes(s.id));
+                        const visible = assigned.slice(0, 3);
+                        const extra = assigned.length - visible.length;
+                        if (assigned.length === 0) return null;
+                        return (
+                          <div className="flex items-center flex-shrink-0">
+                            {visible.map(s => (
+                              <StaffHoverCard key={s.id} staff={s}>
+                                <span
+                                  className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full ring-1 ring-white text-[7px] font-bold text-white -ml-0.5 first:ml-0 tabular-nums cursor-help"
+                                  style={{ backgroundColor: s.colour }}
+                                >
+                                  {initials[s.id] ?? s.name[0]}
+                                </span>
+                              </StaffHoverCard>
+                            ))}
+                            {extra > 0 && (
+                              <StaffListHoverCard
+                                staffList={assigned.slice(3)}
+                                heading={`+${extra} more on ${job.jobName}`}
+                              >
+                                <span
+                                  className="ml-1 inline-flex items-center justify-center px-1 h-3.5 rounded-full bg-white/80 text-[8px] font-bold ring-1 ring-white cursor-help"
+                                  style={{ color: job.colour }}
+                                >
+                                  +{extra}
+                                </span>
+                              </StaffListHoverCard>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Right resize handle */}
@@ -355,6 +505,16 @@ export function Timeline() {
               No active jobs. Add a job to see it on the timeline.
             </div>
           )}
+
+          {/* ── Per-staff allocation strip (Layer B) ── */}
+          <StaffAllocationLayer
+            days={days}
+            totalDays={totalDays}
+            scheduleEntries={scheduleEntries}
+            jobs={jobs}
+            staff={staff}
+            staffEvents={staffEvents}
+          />
         </div>
       </div>
     </div>

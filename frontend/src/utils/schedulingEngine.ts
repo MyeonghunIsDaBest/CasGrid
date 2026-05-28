@@ -10,7 +10,7 @@
 
 import { Staff, Job, ScheduleEntry, StaffEvent } from '../types';
 import { getFutureWorkingDays, toDateString, fromDateString } from './dateUtils';
-import { startOfDay, isBefore } from 'date-fns';
+import { startOfDay, isBefore, differenceInCalendarDays } from 'date-fns';
 
 type DailyCapacityMap = Record<string, Record<string, number>>; // date → staffId → hoursUsed
 type BlockedMap = Record<string, Set<string>>; // date → Set<staffId> blocked
@@ -34,15 +34,15 @@ export function getRemainingHours(job: Job, entries: ScheduleEntry[]): number {
 }
 
 /**
- * Hours the scheduler still needs to lay down for a job — excludes auto entries
- * (which are about to be deleted and replaced) but honours manual overrides
- * already locked in.
+ * Hours the scheduler still needs to lay down for a job — counts ALL locked
+ * entries (manual overrides + past auto-entries representing work already done)
+ * against the estimate, so only future hours get freshly scheduled.
  */
-function getHoursToSchedule(job: Job, manualEntries: ScheduleEntry[]): number {
-  const manualHours = manualEntries
+function getHoursToSchedule(job: Job, lockedEntries: ScheduleEntry[]): number {
+  const lockedHours = lockedEntries
     .filter(e => e.jobId === job.id)
     .reduce((s, e) => s + e.hours, 0);
-  return Math.max(0, job.estimatedHours - manualHours);
+  return Math.max(0, job.estimatedHours - lockedHours);
 }
 
 /**
@@ -87,9 +87,14 @@ export function autoSchedule(
   const capacityUsed: DailyCapacityMap = {};
   const blocked = buildBlockedMap(staffEvents);
 
-  // Preserve and pre-consume manual overrides
-  const manualEntries = existingEntries.filter(e => e.isManualOverride);
-  for (const entry of manualEntries) {
+  // Locked entries = manual overrides + past auto-entries representing work
+  // already done. String compare against the YYYY-MM-DD storage format avoids
+  // mixing local-date (toDateString / format) with UTC-midnight (parseISO).
+  const todayStr = toDateString(new Date());
+  const lockedEntries = existingEntries.filter(
+    e => e.isManualOverride || e.date < todayStr,
+  );
+  for (const entry of lockedEntries) {
     if (!capacityUsed[entry.date]) capacityUsed[entry.date] = {};
     capacityUsed[entry.date][entry.staffId] =
       (capacityUsed[entry.date][entry.staffId] ?? 0) + entry.hours;
@@ -102,7 +107,7 @@ export function autoSchedule(
       j.status !== 'completed' &&
       j.status !== 'onHold' &&
       j.assignedStaffIds.length > 0 &&
-      getHoursToSchedule(j, manualEntries) > 0
+      getHoursToSchedule(j, lockedEntries) > 0
     )
     .sort((a, b) => {
       const pDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
@@ -111,7 +116,7 @@ export function autoSchedule(
     });
 
   for (const job of schedulableJobs) {
-    scheduleJobWithOverrides(job, staff, capacityUsed, blocked, result, overrideOverbooking, manualEntries);
+    scheduleJobWithOverrides(job, staff, capacityUsed, blocked, result, overrideOverbooking, lockedEntries);
   }
 
   return result;
@@ -124,7 +129,7 @@ function scheduleJobWithOverrides(
   blocked: BlockedMap,
   result: ScheduleEntry[],
   overrideOverbooking: boolean,
-  manualEntries: ScheduleEntry[]
+  lockedEntries: ScheduleEntry[]
 ): void {
   const startDate = fromDateString(job.startDate);
   const deadline = fromDateString(job.deadline);
@@ -134,7 +139,7 @@ function scheduleJobWithOverrides(
   const staffById: Record<string, Staff> = {};
   for (const s of allStaff) staffById[s.id] = s;
 
-  let hoursLeft = getHoursToSchedule(job, manualEntries);
+  let hoursLeft = getHoursToSchedule(job, lockedEntries);
 
   // Group days by which staff are assigned (using dailyStaffOverrides)
   // We need to figure out how many "staff-hours" are available per day
@@ -289,4 +294,76 @@ export function getUtilisationTextClass(ratio: number): string {
   if (ratio < 0.75) return 'text-emerald-600';
   if (ratio < 0.95) return 'text-amber-600';
   return 'text-red-600';
+}
+
+// ─── Job risk classifier ──────────────────────────────────────────────────
+// Gradient version of `isJobAtRisk` used to colour dashboard chart segments.
+// `isJobAtRisk` stays as the boolean (jobsAtRisk counter, at-risk pill on
+// Timeline); this helper returns a three-tier level for visualisation.
+
+export type JobRiskLevel = 'ok' | 'warning' | 'critical';
+
+export function getJobRiskLevel(
+  job: Job,
+  entries: ScheduleEntry[],
+  now: Date = new Date(),
+): JobRiskLevel {
+  // Paused / finished jobs don't carry risk — callers should usually filter
+  // them out, but 'ok' is a safe fallback.
+  if (job.status === 'completed' || job.status === 'onHold') return 'ok';
+
+  const start = fromDateString(job.startDate);
+  const end   = fromDateString(job.deadline);
+  const today = startOfDay(now);
+
+  // Overdue trumps everything.
+  if (isBefore(end, today)) return 'critical';
+
+  // Job hasn't started yet → ok.
+  if (isBefore(today, start)) return 'ok';
+
+  const scheduledHours = entries
+    .filter(e => e.jobId === job.id)
+    .reduce((s, e) => s + e.hours, 0);
+  const schedFrac = scheduledHours / Math.max(job.estimatedHours, 1);
+
+  const total   = Math.max(1, differenceInCalendarDays(end, start));
+  const elapsed = Math.max(0, differenceInCalendarDays(today, start));
+  const timeFrac = Math.min(1, elapsed / total);
+
+  // delta < 0 ⇒ behind schedule (scheduled less than time elapsed).
+  const delta = schedFrac - timeFrac;
+  const daysLeft = differenceInCalendarDays(end, today);
+
+  if (delta < -0.25) return 'critical';
+  if (daysLeft <= 3 && delta < -0.1) return 'critical';
+  if (delta < -0.1) return 'warning';
+  return 'ok';
+}
+
+const RISK_FILL: Record<JobRiskLevel, string> = {
+  ok:       '#10b981', // emerald-500
+  warning:  '#f59e0b', // amber-500
+  critical: '#ef4444', // red-500
+};
+
+export function getJobRiskFill(level: JobRiskLevel): string {
+  return RISK_FILL[level];
+}
+
+const RISK_LABEL: Record<JobRiskLevel, string> = {
+  ok:       'On track',
+  warning:  'Behind',
+  critical: 'At risk',
+};
+
+export function getJobRiskLabel(level: JobRiskLevel): string {
+  return RISK_LABEL[level];
+}
+
+/** Pick the worst risk across a list (used to colour a whole job series). */
+export function worstRisk(levels: JobRiskLevel[]): JobRiskLevel {
+  if (levels.includes('critical')) return 'critical';
+  if (levels.includes('warning'))  return 'warning';
+  return 'ok';
 }

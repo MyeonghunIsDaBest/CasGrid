@@ -1,11 +1,12 @@
 import React, {
   createContext, useContext, useReducer, useEffect,
-  useCallback, useRef, useState,
+  useCallback, useRef, useState, useMemo,
 } from 'react';
 import { toast } from 'sonner';
-import type { AppState, Staff, Job, ScheduleEntry, AppSettings, StaffEvent, SimproConfig } from '../types';
+import type { AppState, Staff, Job, ScheduleEntry, AppSettings, StaffEvent, SimproConfig, SyncTable, EventKind } from '../types';
 import { autoSchedule, generateId } from '../utils/schedulingEngine';
-import { DEMO_STAFF, DEMO_JOBS, DEMO_SCHEDULE_ENTRIES, DEMO_STAFF_EVENTS } from '../utils/demoData';
+import { initialRunningTimeFields } from '../utils/runningTime';
+import { toDateString } from '../utils/dateUtils';
 import { supabase } from '../lib/supabase';
 import * as db from '../lib/db';
 
@@ -15,6 +16,7 @@ const defaultSettings: AppSettings = {
   overrideOverbooking:   false,
   workingDaysPerWeek:    [1, 2, 3, 4, 5],
   currentWeekOffset:     0,
+  capacityTargets:       { weeklyBaseline: 240, weeklyStretch: 350 },
 };
 
 const defaultSimproConfig: SimproConfig = {
@@ -30,6 +32,9 @@ const defaultSimproConfig: SimproConfig = {
 const emptyState: AppState = {
   staff: [], jobs: [], scheduleEntries: [], staffEvents: [],
   settings: defaultSettings, simproConfig: defaultSimproConfig,
+  lastSyncAt: null,
+  lastEventAt: {},
+  recentEvents: [],
 };
 
 // currentWeekOffset is per-device (each user navigates calendar independently)
@@ -41,7 +46,7 @@ export type SyncStatus = 'live' | 'reconnecting' | 'offline';
 // ─── Reducer ─────────────────────────────────────────────────────────────────
 
 type Action =
-  | { type: 'LOAD_ALL';           payload: Omit<AppState, 'settings'> & { settings: Omit<AppSettings,'currentWeekOffset'> } }
+  | { type: 'LOAD_ALL';           payload: Omit<AppState, 'settings' | 'lastSyncAt' | 'lastEventAt' | 'recentEvents'> & { settings: Omit<AppSettings,'currentWeekOffset'> } }
   | { type: 'ADD_STAFF';          payload: Staff }
   | { type: 'UPDATE_STAFF';       payload: Staff }
   | { type: 'UPSERT_STAFF';       payload: Staff }        // from Realtime
@@ -60,7 +65,8 @@ type Action =
   | { type: 'DELETE_STAFF_EVENT'; payload: string }
   | { type: 'UPDATE_SETTINGS';    payload: Partial<AppSettings> }
   | { type: 'UPDATE_SIMPRO_CONFIG'; payload: Partial<SimproConfig> }
-  | { type: 'RESET_DEMO' };
+  | { type: 'STAMP_SYNC';          payload: { table?: SyncTable } }
+  | { type: 'LOG_EVENT';           payload: { kind: EventKind; entity: SyncTable; label: string } };
 
 function upsert<T extends { id: string | number }>(list: T[], item: T): T[] {
   return list.some(x => x.id === item.id)
@@ -79,6 +85,11 @@ function reducer(state: AppState, action: Action): AppState {
           // Preserve the per-device week offset that came in via localStorage
           currentWeekOffset: state.settings.currentWeekOffset,
         },
+        // Telemetry is UI-only; keep what we've collected this session and
+        // stamp a fresh sync timestamp so the dashboard shows "Updated just now".
+        lastSyncAt: Date.now(),
+        lastEventAt: state.lastEventAt,
+        recentEvents: state.recentEvents,
       };
 
     // ── Staff ──
@@ -135,9 +146,43 @@ function reducer(state: AppState, action: Action): AppState {
     case 'UPDATE_SIMPRO_CONFIG':
       return { ...state, simproConfig: { ...state.simproConfig, ...action.payload } };
 
-    // ── Reset ──
-    case 'RESET_DEMO':
-      return { ...emptyState, settings: { ...defaultSettings, currentWeekOffset: state.settings.currentWeekOffset } };
+    // ── Realtime telemetry ────────────────────────────────────────────────
+    // Every Realtime + local mutation stamps `lastSyncAt` (and optionally a
+    // per-table `lastEventAt`) so dashboard widgets can show "Updated Ns ago"
+    // and pulse on the matching table change.
+    case 'STAMP_SYNC': {
+      const now = Date.now();
+      if (!action.payload.table) {
+        return { ...state, lastSyncAt: now };
+      }
+      return {
+        ...state,
+        lastSyncAt: now,
+        lastEventAt: { ...state.lastEventAt, [action.payload.table]: now },
+      };
+    }
+
+    // Coalesce bursts: a re-schedule fires many UPSERTs in a row. If the
+    // last entry is the same entity within 250 ms, fold this one in as a
+    // rolling "N entries updated" so the activity log doesn't flood.
+    case 'LOG_EVENT': {
+      const now = Date.now();
+      const entry = { ...action.payload, at: now };
+      const last = state.recentEvents[0];
+      let next = state.recentEvents;
+      if (
+        last &&
+        last.entity === entry.entity &&
+        now - last.at < 250 &&
+        entry.entity === 'schedule_entries'
+      ) {
+        const count = (last.count ?? 1) + 1;
+        next = [{ ...entry, kind: 'update', label: `Schedule rebuilt — ${count} entries`, count }, ...state.recentEvents.slice(1)];
+      } else {
+        next = [entry, ...state.recentEvents].slice(0, 50);
+      }
+      return { ...state, recentEvents: next };
+    }
 
     default:
       return state;
@@ -163,7 +208,6 @@ interface AppContextType {
   runAutoSchedule:      ()                            => void;
   updateSettings:       (s: Partial<AppSettings>)     => void;
   updateSimproConfig:   (c: Partial<SimproConfig>)    => void;
-  resetDemo:            ()                            => void;
   exportData:           ()                            => void;
   importData:           (json: string)                => void;
 }
@@ -238,7 +282,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           jobs,
           scheduleEntries: entries,
           staffEvents:     events,
-          settings:        settings ?? { overrideOverbooking: false, workingDaysPerWeek: [1,2,3,4,5] },
+          settings:        settings ?? { overrideOverbooking: false, workingDaysPerWeek: [1,2,3,4,5], capacityTargets: { weeklyBaseline: 240, weeklyStretch: 350 } },
           simproConfig:    simpro   ?? defaultSimproConfig,
         },
       });
@@ -280,41 +324,97 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       skipAutoScheduleRef.current = true;   // consumed once by the auto-schedule effect (§5)
       fn();
     }
+    // Stamp telemetry + push a row into the dashboard's Recent activity log.
+    function note(table: SyncTable, kind: EventKind, label: string) {
+      dispatch({ type: 'STAMP_SYNC', payload: { table } });
+      dispatch({ type: 'LOG_EVENT', payload: { kind, entity: table, label } });
+    }
 
     const channel = supabase
       .channel('casgrid-app-changes')
 
       // ── staff ──
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'staff' },
-        ({ new: r }) => withSkip(() => dispatch({ type: 'UPSERT_STAFF', payload: db.fromDbStaff(r as Record<string,unknown>) })))
+        ({ new: r }) => {
+          const s = db.fromDbStaff(r as Record<string,unknown>);
+          withSkip(() => dispatch({ type: 'UPSERT_STAFF', payload: s }));
+          note('staff', 'add', `Staff added — ${s.name}`);
+        })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'staff' },
-        ({ new: r }) => withSkip(() => dispatch({ type: 'UPSERT_STAFF', payload: db.fromDbStaff(r as Record<string,unknown>) })))
+        ({ new: r }) => {
+          const s = db.fromDbStaff(r as Record<string,unknown>);
+          withSkip(() => dispatch({ type: 'UPSERT_STAFF', payload: s }));
+          note('staff', 'update', `Staff updated — ${s.name}`);
+        })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'staff' },
-        ({ old: r }) => withSkip(() => dispatch({ type: 'DELETE_STAFF', payload: (r as { id: string }).id })))
+        ({ old: r }) => {
+          const id = (r as { id: string }).id;
+          withSkip(() => dispatch({ type: 'DELETE_STAFF', payload: id }));
+          note('staff', 'delete', 'Staff removed');
+        })
 
       // ── jobs ──
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'jobs' },
-        ({ new: r }) => withSkip(() => dispatch({ type: 'UPSERT_JOB', payload: db.fromDbJob(r as Record<string,unknown>) })))
+        ({ new: r }) => {
+          const j = db.fromDbJob(r as Record<string,unknown>);
+          withSkip(() => dispatch({ type: 'UPSERT_JOB', payload: j }));
+          note('jobs', 'add', `Job added — ${j.jobName}`);
+        })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'jobs' },
-        ({ new: r }) => withSkip(() => dispatch({ type: 'UPSERT_JOB', payload: db.fromDbJob(r as Record<string,unknown>) })))
+        ({ new: r }) => {
+          const j = db.fromDbJob(r as Record<string,unknown>);
+          withSkip(() => dispatch({ type: 'UPSERT_JOB', payload: j }));
+          note('jobs', 'update', `Job updated — ${j.jobName}`);
+        })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'jobs' },
-        ({ old: r }) => withSkip(() => dispatch({ type: 'DELETE_JOB', payload: (r as { id: string }).id })))
+        ({ old: r }) => {
+          const id = (r as { id: string }).id;
+          withSkip(() => dispatch({ type: 'DELETE_JOB', payload: id }));
+          note('jobs', 'delete', 'Job removed');
+        })
 
       // ── schedule_entries ──
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'schedule_entries' },
-        ({ new: r }) => withSkip(() => dispatch({ type: 'UPSERT_SCHEDULE_ENTRY', payload: db.fromDbEntry(r as Record<string,unknown>) })))
+        ({ new: r }) => {
+          withSkip(() => dispatch({ type: 'UPSERT_SCHEDULE_ENTRY', payload: db.fromDbEntry(r as Record<string,unknown>) }));
+          note('schedule_entries', 'add', 'Schedule entry added');
+        })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'schedule_entries' },
-        ({ new: r }) => withSkip(() => dispatch({ type: 'UPSERT_SCHEDULE_ENTRY', payload: db.fromDbEntry(r as Record<string,unknown>) })))
+        ({ new: r }) => {
+          withSkip(() => dispatch({ type: 'UPSERT_SCHEDULE_ENTRY', payload: db.fromDbEntry(r as Record<string,unknown>) }));
+          note('schedule_entries', 'update', 'Schedule entry updated');
+        })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'schedule_entries' },
-        ({ old: r }) => withSkip(() => dispatch({ type: 'DELETE_SCHEDULE_ENTRY', payload: (r as { id: string }).id })))
+        ({ old: r }) => {
+          // Past auto-entries represent work already done and must not be wiped
+          // locally by a stale DELETE echo from another client. REPLICA IDENTITY
+          // FULL (002_enable_realtime.sql) guarantees old.date and
+          // old.is_manual_override are present.
+          const row = r as { id: string; date?: string; is_manual_override?: boolean };
+          const todayStr = toDateString(new Date());
+          if (row.date && row.date < todayStr && row.is_manual_override === false) return;
+          withSkip(() => dispatch({ type: 'DELETE_SCHEDULE_ENTRY', payload: row.id }));
+          note('schedule_entries', 'delete', 'Schedule entry removed');
+        })
 
       // ── staff_events ──
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'staff_events' },
-        ({ new: r }) => withSkip(() => dispatch({ type: 'UPSERT_STAFF_EVENT', payload: db.fromDbEvent(r as Record<string,unknown>) })))
+        ({ new: r }) => {
+          const ev = db.fromDbEvent(r as Record<string,unknown>);
+          withSkip(() => dispatch({ type: 'UPSERT_STAFF_EVENT', payload: ev }));
+          note('staff_events', 'add', `Event added — ${ev.label || ev.type}`);
+        })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'staff_events' },
-        ({ new: r }) => withSkip(() => dispatch({ type: 'UPSERT_STAFF_EVENT', payload: db.fromDbEvent(r as Record<string,unknown>) })))
+        ({ new: r }) => {
+          const ev = db.fromDbEvent(r as Record<string,unknown>);
+          withSkip(() => dispatch({ type: 'UPSERT_STAFF_EVENT', payload: ev }));
+          note('staff_events', 'update', `Event updated — ${ev.label || ev.type}`);
+        })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'staff_events' },
-        ({ old: r }) => withSkip(() => dispatch({ type: 'DELETE_STAFF_EVENT', payload: (r as { id: string }).id })))
+        ({ old: r }) => {
+          withSkip(() => dispatch({ type: 'DELETE_STAFF_EVENT', payload: (r as { id: string }).id }));
+          note('staff_events', 'delete', 'Event removed');
+        })
 
       // ── app_settings ──
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_settings' },
@@ -325,8 +425,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             payload: {
               overrideOverbooking: row.override_overbooking as boolean,
               workingDaysPerWeek:  row.working_days_per_week as number[],
+              capacityTargets:     (row.capacity_targets as { weeklyBaseline: number; weeklyStretch: number } | undefined)
+                                     ?? { weeklyBaseline: 240, weeklyStretch: 350 },
             },
           }));
+          note('app_settings', 'update', 'Settings updated');
         })
 
       // ── simpro_config ──
@@ -346,6 +449,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               // apiToken is intentionally not synced — it is not persisted (see db.ts:upsertSimproConfig)
             },
           }));
+          note('simpro_config', 'update', 'Simpro settings updated');
         })
 
       .subscribe((status) => {
@@ -424,59 +528,91 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ── 6. Action functions (same signatures as the prototype) ────────────────
 
+  // Telemetry helper for the originating client. Stamps `lastSyncAt` and pushes
+  // a row into Recent activity so the user sees their own actions reflected
+  // immediately — Realtime echoes from other tabs/devices use the same shape.
+  const noteLocal = useCallback((table: SyncTable, kind: EventKind, label: string) => {
+    dispatch({ type: 'STAMP_SYNC', payload: { table } });
+    dispatch({ type: 'LOG_EVENT', payload: { kind, entity: table, label } });
+  }, []);
+
   function addStaff(s: Omit<Staff,'id'>) {
     const staff: Staff = { ...s, id: generateId() };
     dispatch({ type: 'ADD_STAFF', payload: staff });
+    noteLocal('staff', 'add', `Staff added — ${staff.name}`);
     persist('staff member', () => db.upsertStaff(staff));
   }
   function updateStaff(s: Staff) {
     dispatch({ type: 'UPDATE_STAFF', payload: s });
+    noteLocal('staff', 'update', `Staff updated — ${s.name}`);
     persist('staff member', () => db.upsertStaff(s));
   }
   function deleteStaff(id: string) {
+    const name = state.staff.find(s => s.id === id)?.name ?? 'staff';
     dispatch({ type: 'DELETE_STAFF', payload: id });
+    noteLocal('staff', 'delete', `Staff removed — ${name}`);
     persist('staff removal', () => db.deleteStaff(id));
   }
 
   function addJob(j: Omit<Job,'id'>) {
-    const job: Job = { ...j, id: generateId() };
+    // New jobs start their running-time timer immediately (unless created
+    // already in a paused status).
+    const job: Job = {
+      ...j,
+      id: generateId(),
+      ...initialRunningTimeFields(j.status),
+    };
     dispatch({ type: 'ADD_JOB', payload: job });
+    noteLocal('jobs', 'add', `Job added — ${job.jobName}`);
     persist('job', () => db.upsertJob(job));
   }
   function updateJob(j: Job) {
+    // Callers that change status (Mark Complete / Hold / Resume) are expected
+    // to spread `applyStatusChange(prev, nextStatus)` into the payload so the
+    // running-time fields are correct. The form handles its own running-time
+    // edit explicitly via `fromManualHours`. Persist whatever comes in.
     dispatch({ type: 'UPDATE_JOB', payload: j });
+    noteLocal('jobs', 'update', `Job updated — ${j.jobName}`);
     persist('job', () => db.upsertJob(j));
   }
   function deleteJob(id: string) {
+    const name = state.jobs.find(x => x.id === id)?.jobName ?? 'job';
     dispatch({ type: 'DELETE_JOB', payload: id });
+    noteLocal('jobs', 'delete', `Job removed — ${name}`);
     persist('job removal', () => db.deleteJob(id));
   }
 
   function updateScheduleEntry(e: ScheduleEntry) {
     dispatch({ type: 'UPDATE_SCHEDULE_ENTRY', payload: e });
+    noteLocal('schedule_entries', 'update', 'Schedule entry updated');
     persist('schedule change', () => db.upsertScheduleEntry(e));
   }
   function deleteScheduleEntry(id: string) {
     dispatch({ type: 'DELETE_SCHEDULE_ENTRY', payload: id });
+    noteLocal('schedule_entries', 'delete', 'Schedule entry removed');
     persist('schedule change', () => db.deleteScheduleEntry(id));
   }
 
   function addStaffEvent(e: Omit<StaffEvent,'id'>) {
     const ev: StaffEvent = { ...e, id: generateId() };
     dispatch({ type: 'ADD_STAFF_EVENT', payload: ev });
+    noteLocal('staff_events', 'add', `Event added — ${ev.label || ev.type}`);
     persist('event', () => db.upsertStaffEvent(ev));
   }
   function updateStaffEvent(e: StaffEvent) {
     dispatch({ type: 'UPDATE_STAFF_EVENT', payload: e });
+    noteLocal('staff_events', 'update', `Event updated — ${e.label || e.type}`);
     persist('event', () => db.upsertStaffEvent(e));
   }
   function deleteStaffEvent(id: string) {
     dispatch({ type: 'DELETE_STAFF_EVENT', payload: id });
+    noteLocal('staff_events', 'delete', 'Event removed');
     persist('event removal', () => db.deleteStaffEvent(id));
   }
 
   function updateSettings(partial: Partial<AppSettings>) {
     dispatch({ type: 'UPDATE_SETTINGS', payload: partial });
+    noteLocal('app_settings', 'update', 'Settings updated');
     // Persist shared settings (not currentWeekOffset — that's local)
     const { currentWeekOffset: _skip, ...shared } = { ...state.settings, ...partial };
     persist('settings', () => db.upsertSettings(shared));
@@ -484,14 +620,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   function updateSimproConfig(partial: Partial<SimproConfig>) {
     dispatch({ type: 'UPDATE_SIMPRO_CONFIG', payload: partial });
+    noteLocal('simpro_config', 'update', 'Simpro settings updated');
     const next = { ...state.simproConfig, ...partial };
     persist('Simpro settings', () => db.upsertSimproConfig(next));
-  }
-
-  function resetDemo() {
-    dispatch({ type: 'RESET_DEMO' });
-    persist('demo reset', () =>
-      db.seedDatabase(DEMO_STAFF, DEMO_JOBS, DEMO_SCHEDULE_ENTRIES, DEMO_STAFF_EVENTS));
   }
 
   function exportData() {
@@ -525,7 +656,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       toast.error('Import file is missing one of: staff, jobs, scheduleEntries, staffEvents.');
       return;
     }
-    db.seedDatabase(
+    db.replaceAllData(
       parsed.staff,
       parsed.jobs,
       parsed.scheduleEntries,
@@ -534,6 +665,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       dispatch({ type: 'LOAD_ALL', payload: parsed });
     }).catch(err => toast.error(`Import failed: ${err.message}`));
   }
+
+  // Memoise the Provider value so we don't construct a brand-new object on
+  // every render. Without this, *any* re-render of AppProvider (e.g. a
+  // local-only state tick) would force every `useApp` consumer to re-render
+  // — that contributed to the "feels like everything resets" perception on
+  // Live updates. Deps include `state` + `syncStatus`; the action functions
+  // are captured at memo-time and stay aligned with the state they close
+  // over because they're rebuilt every time state changes anyway.
+  // IMPORTANT: this useMemo must live BEFORE the conditional early returns
+  // (loading / loadError) so the hook order stays stable across renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const value = useMemo(() => ({
+    state,
+    syncStatus,
+    addStaff, updateStaff, deleteStaff,
+    addJob, updateJob, deleteJob,
+    updateScheduleEntry, deleteScheduleEntry,
+    addStaffEvent, updateStaffEvent, deleteStaffEvent,
+    runAutoSchedule, updateSettings, updateSimproConfig,
+    exportData, importData,
+  }), [state, syncStatus]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -581,16 +733,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{
-      state,
-      syncStatus,
-      addStaff, updateStaff, deleteStaff,
-      addJob, updateJob, deleteJob,
-      updateScheduleEntry, deleteScheduleEntry,
-      addStaffEvent, updateStaffEvent, deleteStaffEvent,
-      runAutoSchedule, updateSettings, updateSimproConfig,
-      resetDemo, exportData, importData,
-    }}>
+    <AppContext.Provider value={value}>
       {children}
     </AppContext.Provider>
   );

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  X, Edit2, CheckCircle, PauseCircle, Trash2, Clock,
+  X, Edit2, CheckCircle, PauseCircle, Clock,
   Calendar, Users, AlertTriangle, ChevronRight, CalendarDays, BarChart2
 } from 'lucide-react';
 import { differenceInCalendarDays, addDays } from 'date-fns';
@@ -11,6 +11,7 @@ import { useJobModal } from '../context/JobModalContext';
 import { JobForm } from './forms/JobForm';
 import { DailyStaffAssignment } from './DailyStaffAssignment';
 import { isJobAtRisk, getEffectiveAvailable, getRemainingHours } from '../utils/schedulingEngine';
+import { getRunningTimeMs, formatRunningTime, isJobRunning, useRunningTimeNow, applyStatusChange } from '../utils/runningTime';
 import { fromDateString, toDateString, getWorkingDays } from '../utils/dateUtils';
 import { format } from 'date-fns';
 
@@ -31,7 +32,7 @@ const PRIORITY_COLOURS = {
 type Panel = 'overview' | 'dailyStaff' | 'hoursBreakdown';
 
 export function JobDetailModal() {
-  const { state, updateJob, deleteJob } = useApp();
+  const { state, updateJob } = useApp();
   const { selectedJobId, closeJob } = useJobModal();
   const [showEditForm, setShowEditForm] = useState(false);
   const [activePanel, setActivePanel] = useState<Panel>('overview');
@@ -45,6 +46,15 @@ export function JobDetailModal() {
   const scheduledHours = jobEntries.reduce((s, e) => s + e.hours, 0);
   const remainingHours = getRemainingHours(job, scheduleEntries);
   const progressPct = Math.min(100, Math.round((scheduledHours / Math.max(job.estimatedHours, 1)) * 100));
+
+  // Real-time running clock — ticks every second while the job is in an active
+  // status; idles when paused (completed / onHold).
+  const now = useRunningTimeNow(job);
+  const runningMs = getRunningTimeMs(job, now);
+  const runningLabel = formatRunningTime(runningMs);
+  const isRunning = isJobRunning(job);
+  const runningHours = runningMs / 3600 / 1000;
+  const workedPct = Math.min(100, Math.round((runningHours / Math.max(job.estimatedHours, 1)) * 100));
   const atRisk = isJobAtRisk(job, scheduleEntries, staff);
   const daysLeft = differenceInCalendarDays(fromDateString(job.deadline), new Date());
 
@@ -81,10 +91,6 @@ export function JobDetailModal() {
     if (staffDayHours[entry.staffId]?.[entry.date] !== undefined) {
       staffDayHours[entry.staffId][entry.date] += entry.hours;
     }
-  }
-
-  function handleDelete() {
-    if (confirm(`Delete "${job.jobName}"?`)) { deleteJob(job.id); closeJob(); }
   }
 
   const panelTabs = [
@@ -132,21 +138,57 @@ export function JobDetailModal() {
         {/* ── Hours at a glance bar ── */}
         <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/60">
           <div className="flex items-center gap-4 flex-wrap">
-            {/* Scheduled vs Estimated */}
-            <div className="flex-1 min-w-40">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Scheduled / Estimated</span>
-                <span className={`text-xs font-bold ${scheduledHours >= job.estimatedHours * 0.85 ? 'text-emerald-600' : 'text-orange-600'}`}>
-                  {scheduledHours.toFixed(1)}h / {job.estimatedHours}h
+            {/* Scheduled vs Estimated + Time Worked vs Estimated */}
+            <div className="flex-1 min-w-40 space-y-2">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Planned / Estimated</span>
+                  <span className={`text-xs font-bold ${scheduledHours >= job.estimatedHours * 0.85 ? 'text-emerald-600' : 'text-orange-600'}`}>
+                    {scheduledHours.toFixed(1)}h / {job.estimatedHours}h
+                  </span>
+                </div>
+                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }} animate={{ width: `${progressPct}%` }}
+                    transition={{ duration: 0.5 }}
+                    className="h-full rounded-full"
+                    style={{ backgroundColor: progressPct >= 85 ? '#10b981' : progressPct >= 50 ? '#f59e0b' : '#ef4444' }}
+                  />
+                </div>
+              </div>
+              {/* Time Worked vs Estimated — filled by the running-time clock */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Time Worked / Estimated</span>
+                  <span className={`text-xs font-bold ${workedPct >= 100 ? 'text-emerald-600' : workedPct >= 50 ? 'text-amber-600' : 'text-slate-500'}`}>
+                    {runningHours.toFixed(1)}h / {job.estimatedHours}h
+                  </span>
+                </div>
+                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }} animate={{ width: `${workedPct}%` }}
+                    transition={{ duration: 0.5 }}
+                    className="h-full rounded-full"
+                    style={{ backgroundColor: workedPct >= 100 ? '#10b981' : workedPct >= 75 ? '#f59e0b' : '#3b82f6' }}
+                  />
+                </div>
+              </div>
+            </div>
+            {/* Running time — live ticker for active jobs */}
+            <div className="text-center">
+              <div className="flex items-center justify-center gap-1">
+                <span
+                  className={`inline-block w-1.5 h-1.5 rounded-full ${
+                    isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'
+                  }`}
+                  aria-hidden
+                />
+                <span className={`text-base font-bold tabular-nums ${isRunning ? 'text-emerald-600' : 'text-slate-500'}`}>
+                  {runningLabel}
                 </span>
               </div>
-              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }} animate={{ width: `${progressPct}%` }}
-                  transition={{ duration: 0.5 }}
-                  className="h-full rounded-full"
-                  style={{ backgroundColor: progressPct >= 85 ? '#10b981' : progressPct >= 50 ? '#f59e0b' : '#ef4444' }}
-                />
+              <div className="text-[9px] text-slate-400 uppercase tracking-wide">
+                {isRunning ? 'Running' : 'Paused'}
               </div>
             </div>
             {/* Available capacity */}
@@ -389,28 +431,23 @@ export function JobDetailModal() {
             <Edit2 size={12}/> Edit
           </button>
           {job.status !== 'completed' && (
-            <button onClick={() => { updateJob({ ...job, status: 'completed' }); closeJob(); }}
+            <button onClick={() => { updateJob({ ...job, status: 'completed', ...applyStatusChange(job, 'completed') }); closeJob(); }}
               className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-xl hover:bg-emerald-100 border border-emerald-200 transition-colors">
               <CheckCircle size={12}/> Complete
             </button>
           )}
           {job.status !== 'onHold' && job.status !== 'completed' && (
-            <button onClick={() => updateJob({ ...job, status: 'onHold' })}
+            <button onClick={() => updateJob({ ...job, status: 'onHold', ...applyStatusChange(job, 'onHold') })}
               className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 text-xs font-semibold rounded-xl hover:bg-amber-100 border border-amber-200 transition-colors">
               <PauseCircle size={12}/> Hold
             </button>
           )}
           {job.status === 'onHold' && (
-            <button onClick={() => updateJob({ ...job, status: 'scheduled' })}
+            <button onClick={() => updateJob({ ...job, status: 'scheduled', ...applyStatusChange(job, 'scheduled') })}
               className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 text-xs font-semibold rounded-xl hover:bg-amber-100 border border-amber-200 transition-colors">
               <ChevronRight size={12}/> Resume
             </button>
           )}
-          <div className="flex-1" />
-          <button onClick={handleDelete}
-            className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-600 text-xs font-semibold rounded-xl hover:bg-red-100 border border-red-100 transition-colors">
-            <Trash2 size={12}/> Delete
-          </button>
         </div>
       </motion.div>
 
