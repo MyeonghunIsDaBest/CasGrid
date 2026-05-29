@@ -163,7 +163,7 @@ function AppShell() {
                 <Timeline />
               </div>
             )}
-            {activeTab === 'jobs' && <div className="max-w-4xl mx-auto"><JobsPanel /></div>}
+            {activeTab === 'jobs' && <div className="max-w-7xl mx-auto"><JobsPanel /></div>}
             {activeTab === 'staff' && <StaffPanel />}
             {activeTab === 'timeline' && (
               <div className="space-y-5">
