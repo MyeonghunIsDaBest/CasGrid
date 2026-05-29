@@ -31,6 +31,12 @@ export function StaffAllocationLayer({ days, totalDays, scheduleEntries, jobs, s
     [dayStrings, billableStaff, scheduleEntries, jobs, staffEvents],
   );
 
+  // Days a staff member has approved overtime → render amber, not red.
+  const otDays = useMemo(
+    () => new Set(scheduleEntries.filter(e => e.isOvertime).map(e => `${e.date}|${e.staffId}`)),
+    [scheduleEntries],
+  );
+
   if (billableStaff.length === 0) return null;
 
   return (
@@ -116,13 +122,14 @@ export function StaffAllocationLayer({ days, totalDays, scheduleEntries, jobs, s
                   );
                 }
 
-                const bgClass = getUtilisationBgClass(ratio);
+                const isOT = otDays.has(`${dStr}|${member.id}`);
+                const bgClass = isOT && ratio > 1.0001 ? 'bg-amber-500' : getUtilisationBgClass(ratio);
                 return (
                   <div
                     key={i}
                     className={`border-r border-slate-100 flex items-center justify-center py-1 ${isT ? 'bg-amber-50/60' : ''}`}
                     style={{ width: `${widthPct}%` }}
-                    title={`${dStr} · ${used.toFixed(1)}/${avail.toFixed(0)}h (${Math.round(ratio * 100)}%)`}
+                    title={`${dStr} · ${used.toFixed(1)}/${avail.toFixed(0)}h (${Math.round(ratio * 100)}%)${isOT ? ' · overtime' : ''}`}
                   >
                     <div
                       className={`w-[80%] h-3 rounded ${bgClass} flex items-center justify-center`}

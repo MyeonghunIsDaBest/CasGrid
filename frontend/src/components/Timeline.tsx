@@ -3,13 +3,14 @@ import { useMemo, useRef, useState } from 'react';
 import { addDays, format, differenceInCalendarDays, isBefore, isAfter } from 'date-fns';
 import { useApp } from '../context/AppContext';
 import { useJobModal } from '../context/JobModalContext';
-import { toDateString, isToday } from '../utils/dateUtils';
+import { toDateString, isToday, formatDay } from '../utils/dateUtils';
 import { isJobAtRisk, getRemainingHours, getAllJobStaffIds } from '../utils/schedulingEngine';
 import { AlertTriangle, GripHorizontal, Clock, Users } from 'lucide-react';
 import { StaffAllocationLayer } from './timeline/StaffAllocationLayer';
 import { WeeklyCapacityHeader } from './timeline/WeeklyCapacityHeader';
 import { StaffHoverCard } from './StaffHoverCard';
 import { StaffListHoverCard } from './StaffListHoverCard';
+import { toast } from 'sonner';
 
 const DAYS_TO_SHOW = 49; // 7 weeks
 
@@ -53,7 +54,6 @@ export function Timeline() {
   const dragRef = useRef(null);
   const [draggingJobId, setDraggingJobId] = useState(null);
   const [liveOffsets, setLiveOffsets] = useState({});
-  const [isDragging, setIsDragging] = useState(false);
 
   // Click-to-highlight: one staff id at a time, or null. Pure UI filter —
   // dims non-matching job bars, doesn't mutate data.
@@ -113,7 +113,6 @@ export function Timeline() {
       origEnd: job.deadline,
     };
     setDraggingJobId(job.id);
-    setIsDragging(true);
     e.currentTarget.setPointerCapture(e.pointerId);
   }
 
@@ -143,26 +142,79 @@ export function Timeline() {
     if (delta !== 0) {
       const job = state.jobs.find(j => j.id === d.jobId);
       if (job) {
-        const origS = fromDate(d.origStart);
-        const origE = fromDate(d.origEnd);
-        let newStart = d.origStart, newEnd = d.origEnd;
-        if (d.mode === 'move') {
-          newStart = toDateString(addDays(origS, delta));
-          newEnd = toDateString(addDays(origE, delta));
-        } else if (d.mode === 'resize-left') {
-          const c = toDateString(addDays(origS, delta));
-          if (c < d.origEnd) newStart = c;
-        } else {
-          const c = toDateString(addDays(origE, delta));
-          if (c > d.origStart) newEnd = c;
+        const orig = { startDate: d.origStart, deadline: d.origEnd };
+        const next = applyDelta(job, d.mode, delta);
+        if (next.startDate !== orig.startDate || next.deadline !== orig.deadline) {
+          updateJob({ ...job, startDate: next.startDate, deadline: next.deadline });
+          toastReschedule(job, next, orig);
         }
-        updateJob({ ...job, startDate: newStart, deadline: newEnd });
       }
     }
     dragRef.current = null;
     setDraggingJobId(null);
     setLiveOffsets({});
-    setTimeout(() => setIsDragging(false), 50);
+  }
+
+  // Apply a whole-day delta under a drag/keyboard mode, clamping to a minimum
+  // 1-day duration so the edges can't cross. `clamped` flags when the limit bit.
+  function applyDelta(job, mode, delta) {
+    const origS = fromDate(job.startDate);
+    const origE = fromDate(job.deadline);
+    if (mode === 'move') {
+      return {
+        startDate: toDateString(addDays(origS, delta)),
+        deadline:  toDateString(addDays(origE, delta)),
+        clamped: false,
+      };
+    }
+    if (mode === 'resize-left') {
+      const want = addDays(origS, delta);
+      const maxStart = addDays(origE, -1);
+      const clamped = isAfter(want, maxStart);
+      return { startDate: toDateString(clamped ? maxStart : want), deadline: job.deadline, clamped };
+    }
+    const want = addDays(origE, delta);
+    const minEnd = addDays(origS, 1);
+    const clamped = isBefore(want, minEnd);
+    return { startDate: job.startDate, deadline: toDateString(clamped ? minEnd : want), clamped };
+  }
+
+  // Commit feedback + one-step undo. Reusing the toast id keeps rapid keyboard
+  // nudges from stacking into a wall of toasts.
+  function toastReschedule(job, next, orig) {
+    const delta =
+      differenceInCalendarDays(fromDate(next.startDate), fromDate(orig.startDate)) ||
+      differenceInCalendarDays(fromDate(next.deadline), fromDate(orig.deadline));
+    const sign = delta > 0 ? '+' : '';
+    toast(`${job.jobName} rescheduled`, {
+      id: `reschedule-${job.id}`,
+      description: `${formatDay(fromDate(next.startDate))} → ${formatDay(fromDate(next.deadline))}${delta ? ` · ${sign}${delta}d` : ''}`,
+      action: {
+        label: 'Undo',
+        onClick: () => updateJob({ ...job, startDate: orig.startDate, deadline: orig.deadline }),
+      },
+    });
+  }
+
+  // Keyboard control for a focused bar: arrows move, Shift = a week, Alt =
+  // resize the deadline, Enter/Space opens the job.
+  function handleKeyDown(e, job) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openJob(job.id);
+      return;
+    }
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const step = e.shiftKey ? 7 : 1;
+    const delta = (e.key === 'ArrowRight' ? 1 : -1) * step;
+    const mode = e.altKey ? 'resize-right' : 'move';
+    const orig = { startDate: job.startDate, deadline: job.deadline };
+    const next = applyDelta(job, mode, delta);
+    if (next.startDate !== orig.startDate || next.deadline !== orig.deadline) {
+      updateJob({ ...job, startDate: next.startDate, deadline: next.deadline });
+      toastReschedule(job, next, orig);
+    }
   }
 
   // Active jobs only. When a staff filter is on, lift bars assigned to that
@@ -400,7 +452,13 @@ export function Timeline() {
                     style={{ left:`${todayPct}%` }} />
 
                   {/* ─ Job bar ─ */}
-                  <div className="absolute top-1/2 -translate-y-1/2 h-9 rounded-lg flex items-center overflow-visible z-20"
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${job.jobName}: ${formatDay(fromDate(job.startDate))} to ${formatDay(fromDate(job.deadline))}`}
+                    aria-roledescription="Schedule bar. Arrow keys move, Shift moves a week, Alt+arrows resize the deadline, Enter opens."
+                    onKeyDown={e => handleKeyDown(e, job)}
+                    className={`absolute top-1/2 -translate-y-1/2 h-9 rounded-lg flex items-center overflow-visible z-20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1 ${isDraggingThis ? 'scale-[1.015]' : ''}`}
                     style={{
                       ...style,
                       backgroundColor: job.colour + '1a',
@@ -410,7 +468,7 @@ export function Timeline() {
                         : `0 1px 4px ${job.colour}33`,
                       cursor: isDraggingThis ? 'grabbing' : 'default',
                       zIndex: isDraggingThis ? 30 : 5,
-                      transition: isDraggingThis ? 'none' : 'box-shadow 0.2s',
+                      transition: isDraggingThis ? 'none' : 'box-shadow .2s, left .25s ease, width .25s ease, transform .15s ease',
                     }}
                   >
                     {/* Progress fill */}
@@ -418,13 +476,15 @@ export function Timeline() {
                       style={{ width:`${prog}%`, backgroundColor: job.colour }} />
 
                     {/* Left resize handle */}
-                    <div className="absolute left-0 top-0 bottom-0 w-3 cursor-w-resize z-30 flex items-center justify-center rounded-l-lg hover:bg-white/40 group/l"
+                    <div className="absolute left-0 top-0 bottom-0 w-4 cursor-w-resize z-30 flex items-center justify-center rounded-l-lg hover:bg-white/50 transition-colors group/lh"
                       onPointerDown={e => startDrag(e, job, 'resize-left')}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
+                      aria-hidden="true"
                     >
-                      <div className="flex flex-col gap-0.5">
-                        <div className="w-0.5 h-2.5 rounded-full opacity-50" style={{ backgroundColor: job.colour }} />
+                      <div className="flex gap-[2px] opacity-40 group-hover/lh:opacity-100 transition-opacity">
+                        <span className="w-[2px] h-3 rounded-full" style={{ backgroundColor: job.colour }} />
+                        <span className="w-[2px] h-3 rounded-full" style={{ backgroundColor: job.colour }} />
                       </div>
                     </div>
 
@@ -433,7 +493,7 @@ export function Timeline() {
                       onPointerDown={e => startDrag(e, job, 'move')}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
-                      onClick={() => { if (!isDragging) openJob(job.id); }}
+                      onDoubleClick={() => openJob(job.id)}
                     >
                       <GripHorizontal size={9} style={{ color: job.colour, opacity: 0.6, flexShrink: 0 }} />
                       <span className="flex-1 text-[9px] font-bold truncate" style={{ color: job.colour }}>
@@ -479,22 +539,33 @@ export function Timeline() {
                     </div>
 
                     {/* Right resize handle */}
-                    <div className="absolute right-0 top-0 bottom-0 w-3 cursor-e-resize z-30 flex items-center justify-center rounded-r-lg hover:bg-white/40"
+                    <div className="absolute right-0 top-0 bottom-0 w-4 cursor-e-resize z-30 flex items-center justify-center rounded-r-lg hover:bg-white/50 transition-colors group/rh"
                       onPointerDown={e => startDrag(e, job, 'resize-right')}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
+                      aria-hidden="true"
                     >
-                      <div className="w-0.5 h-2.5 rounded-full opacity-50" style={{ backgroundColor: job.colour }} />
+                      <div className="flex gap-[2px] opacity-40 group-hover/rh:opacity-100 transition-opacity">
+                        <span className="w-[2px] h-3 rounded-full" style={{ backgroundColor: job.colour }} />
+                        <span className="w-[2px] h-3 rounded-full" style={{ backgroundColor: job.colour }} />
+                      </div>
                     </div>
                   </div>
 
-                  {/* Drag delta tooltip */}
-                  {isDraggingThis && off && (off.start !== 0 || off.end !== 0) && (
-                    <div className="absolute top-1 z-40 pointer-events-none text-[9px] font-bold px-1.5 py-0.5 rounded text-white shadow-lg"
-                      style={{ left: style.left, backgroundColor: job.colour }}>
-                      {(off.start || off.end) > 0 ? '+' : ''}{off.start || off.end}d
-                    </div>
-                  )}
+                  {/* Live date readout while dragging — resulting dates, not just a delta */}
+                  {isDraggingThis && off && (off.start !== 0 || off.end !== 0) && (() => {
+                    const dmode = off.start !== 0 && off.end !== 0 ? 'move' : off.start !== 0 ? 'resize-left' : 'resize-right';
+                    const delta = off.start || off.end;
+                    const res = applyDelta(job, dmode, delta);
+                    const sign = delta > 0 ? '+' : '';
+                    return (
+                      <div className="absolute z-40 pointer-events-none flex items-center gap-1.5 text-[10px] font-semibold px-2 py-1 rounded-md text-white shadow-lg whitespace-nowrap"
+                        style={{ left: style.left, top: '-28px', backgroundColor: res.clamped ? '#e11d48' : job.colour }}>
+                        <span>{formatDay(fromDate(res.startDate))} → {formatDay(fromDate(res.deadline))}</span>
+                        <span className="opacity-80 tabular-nums">{res.clamped ? 'min 1 day' : `${sign}${delta}d`}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             );

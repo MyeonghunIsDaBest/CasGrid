@@ -39,7 +39,7 @@ export function LiveBadge({ label, status, lastSyncAt, compact = false }: Props)
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-md border ${meta.border} ${meta.bg} ${meta.text} ${padding} ${textSize} font-semibold leading-none`}
-      title={effectiveStamp ? `Last sync: ${new Date(effectiveStamp).toLocaleString()}` : 'Awaiting first sync'}
+      title={effectiveStamp ? `Last sync: ${new Date(effectiveStamp).toLocaleString('en-AU')}` : 'Awaiting first sync'}
     >
       <span className={`w-1.5 h-1.5 rounded-full ${meta.dot} ${meta.pulse ? 'animate-pulse' : ''}`} />
       <span>{label ?? meta.label}</span>

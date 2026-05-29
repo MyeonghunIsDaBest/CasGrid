@@ -54,6 +54,11 @@ export function formatMonthYear(d: Date): string {
   return format(d, 'MMM yyyy');
 }
 
+/** Australian numeric format, e.g. "15/06/2025" */
+export function formatDateAU(d: Date): string {
+  return format(d, 'dd/MM/yyyy');
+}
+
 export function isToday(d: Date): boolean {
   return toDateString(d) === toDateString(new Date());
 }

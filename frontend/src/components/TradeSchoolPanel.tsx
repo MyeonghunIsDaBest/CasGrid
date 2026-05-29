@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext';
 import { toDateString, getWeekWorkingDays } from '../utils/dateUtils';
 import { GraduationCap, Plus, Trash2, RefreshCw, Calendar } from 'lucide-react';
 import { StaffEventType } from '../types';
+import { DateField } from './ui/date-field';
 
 const EVENT_TYPES = [
   { value: 'tradeSchool', label: 'Trade School', colour: '#6366f1', icon: '🎓' },
@@ -32,8 +33,18 @@ export function TradeSchoolPanel() {
   const apprentices = staff.filter(s => s.isApprentice && s.active);
   const allActiveStaff = staff.filter(s => s.active);
 
-  // Group events by week for display
+  // Sort by date, then group by calendar month for the card view.
   const sortedEvents = [...staffEvents].sort((a,b) => a.date.localeCompare(b.date));
+  const monthGroups = [];
+  for (const ev of sortedEvents) {
+    const key = ev.date.slice(0, 7);
+    let g = monthGroups.find(x => x.key === key);
+    if (!g) {
+      g = { key, label: format(new Date(ev.date + 'T00:00:00'), 'MMMM yyyy'), events: [] };
+      monthGroups.push(g);
+    }
+    g.events.push(ev);
+  }
 
   function handleAdd() {
     if (!form.staffId || !form.date) return;
@@ -78,8 +89,10 @@ export function TradeSchoolPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2">
-        <GraduationCap size={18} className="text-indigo-500" />
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center flex-shrink-0">
+          <GraduationCap size={18} className="text-indigo-500" />
+        </div>
         <div>
           <h2 className="font-semibold text-slate-800">Staff Events</h2>
           <p className="text-xs text-slate-500">Trade school, leave, sick days — blocks capacity from scheduling</p>
@@ -152,8 +165,7 @@ export function TradeSchoolPanel() {
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
-            <input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-              className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-amber-400" />
+            <DateField value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} />
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Event Type</label>
@@ -189,48 +201,77 @@ export function TradeSchoolPanel() {
         </div>
       </div>
 
-      {/* Events list */}
+      {/* Scheduled events — calendar-event cards grouped by month */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
           <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Scheduled Events ({staffEvents.length})</span>
         </div>
-        <div className="divide-y divide-slate-50 max-h-[400px] overflow-y-auto">
-          {sortedEvents.map(ev => {
-            const et = EVENT_TYPES.find(t => t.value === ev.type);
-            return (
-              <div key={ev.id} className="flex items-center gap-3 px-4 py-2.5">
-                <div className="w-2 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: ev.colour }} />
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <div className="w-5 h-5 rounded-full text-white text-[9px] font-bold flex items-center justify-center"
-                    style={{ backgroundColor: getStaffColour(ev.staffId) }}>
-                    {getStaffName(ev.staffId)[0]}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-semibold text-slate-800">
-                    {getStaffName(ev.staffId)}
-                    <span className="ml-1.5 font-normal text-slate-500">{et?.icon} {ev.label}</span>
-                  </div>
-                  <div className="text-[10px] text-slate-400">
-                    {format(new Date(ev.date + 'T00:00:00'), 'EEE d MMM yyyy')} · {ev.hours}h blocked
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    if (confirm(`Delete this event (${ev.label || ev.type})?`)) deleteStaffEvent(ev.id);
-                  }}
-                  aria-label="Delete event"
-                  className="p-1 hover:bg-red-50 text-slate-300 hover:text-red-500 rounded transition-colors flex-shrink-0">
-                  <Trash2 size={13} />
-                </button>
+        <div className="max-h-[460px] overflow-y-auto bg-slate-50/40 px-4 py-1">
+          {monthGroups.map(group => (
+            <div key={group.key} className="pt-4 first:pt-3">
+              {/* Month heading */}
+              <div className="flex items-center gap-2.5 pb-2.5">
+                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">{group.label}</span>
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-white text-slate-400 ring-1 ring-slate-200/70 tabular-nums">
+                  {group.events.length}
+                </span>
+                <span className="flex-1 h-px bg-slate-200/60" />
               </div>
-            );
-          })}
+
+              {/* Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+                {group.events.map(ev => {
+                  const et = EVENT_TYPES.find(t => t.value === ev.type);
+                  const d = new Date(ev.date + 'T00:00:00');
+                  return (
+                    <div key={ev.id}
+                      className="group relative flex gap-3 bg-white rounded-xl ring-1 ring-slate-200/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all p-3">
+                      {/* Date tile — tinted by event type */}
+                      <div className="flex flex-col items-center justify-center w-12 rounded-lg py-1.5 flex-shrink-0"
+                        style={{ backgroundColor: ev.colour + '14', color: ev.colour }}>
+                        <span className="text-[9px] font-bold uppercase tracking-wide leading-none">{format(d, 'MMM')}</span>
+                        <span className="text-lg font-bold leading-tight tabular-nums">{format(d, 'd')}</span>
+                        <span className="text-[9px] font-medium opacity-70 leading-none">{format(d, 'EEE')}</span>
+                      </div>
+
+                      {/* Details */}
+                      <div className="flex-1 min-w-0 pr-5">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                          <span className="flex-shrink-0">{et?.icon}</span>
+                          <span className="truncate">{ev.label}</span>
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-1.5 min-w-0">
+                          <span className="w-4 h-4 rounded-full text-white text-[8px] font-bold flex items-center justify-center flex-shrink-0"
+                            style={{ backgroundColor: getStaffColour(ev.staffId) }}>
+                            {getStaffName(ev.staffId)[0]}
+                          </span>
+                          <span className="text-[11px] text-slate-500 truncate">{getStaffName(ev.staffId)}</span>
+                        </div>
+                        <span className="mt-1.5 inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md"
+                          style={{ backgroundColor: ev.colour + '14', color: ev.colour }}>
+                          {ev.hours}h blocked
+                        </span>
+                      </div>
+
+                      {/* Delete — revealed on hover */}
+                      <button
+                        onClick={() => { if (confirm(`Delete this event (${ev.label || ev.type})?`)) deleteStaffEvent(ev.id); }}
+                        aria-label="Delete event"
+                        className="absolute top-2 right-2 p-1 rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all">
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
           {staffEvents.length === 0 && (
             <div className="py-10 text-center text-slate-400 text-sm">
               No events scheduled. Add trade school days, leave, or other absences above.
             </div>
           )}
+          <div className="h-3" />
         </div>
       </div>
     </div>

@@ -53,6 +53,10 @@ export interface ScheduleEntry {
   date: string;
   hours: number;
   isManualOverride: boolean;
+  // Day was intentionally approved for overtime (allocated > daily capacity).
+  // Optional so legacy rows / demo data without the field still validate;
+  // treated as false when absent.
+  isOvertime?: boolean;
 }
 
 /** Blocks a staff member's capacity for a day (trade school, leave, etc.) */

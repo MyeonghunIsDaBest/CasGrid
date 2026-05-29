@@ -83,6 +83,7 @@ export function WeeklyPlanner() {
     date: string,
     staffId: string,
     rows: { jobId: string; hours: number }[],
+    overtime: boolean,
   ) {
     const existing = scheduleEntries.filter(
       e => e.date === date && e.staffId === staffId,
@@ -99,6 +100,7 @@ export function WeeklyPlanner() {
           date,
           hours: r.hours,
           isManualOverride: true,
+          isOvertime: overtime,
         });
       });
 
@@ -169,6 +171,9 @@ export function WeeklyPlanner() {
                     const avail = getEffectiveAvailable(member, dateStr, staffEvents);
                     const ratio = avail > 0 ? hours / avail : hours > 0 ? 1.5 : 0;
                     const cellEntries = getCellEntries(dateStr, member.id);
+                    // Approved overtime reads as calm amber, not alarming red.
+                    const isOT = cellEntries.some(e => e.isOvertime);
+                    const utilBg = isOT && ratio > 1.0001 ? 'bg-amber-500' : getUtilisationBgClass(ratio);
 
                     // Check for staff events on this day
                     const dayEvents = staffEvents.filter(ev => ev.staffId === member.id && ev.date === dateStr);
@@ -221,10 +226,13 @@ export function WeeklyPlanner() {
                                 })}
                               </div>
                               <div
-                                className={`inline-flex items-center justify-center w-9 h-6 rounded-md text-white text-[10px] font-bold hover:opacity-80 ${getUtilisationBgClass(ratio)}`}
+                                className={`inline-flex items-center justify-center w-9 h-6 rounded-md text-white text-[10px] font-bold hover:opacity-80 ${utilBg}`}
                               >
                                 {hours % 1 === 0 ? hours : hours.toFixed(1)}h
                               </div>
+                              {isOT && (
+                                <div className="text-[7px] text-amber-600 font-bold mt-0.5">OT</div>
+                              )}
                               {isPartialBlock && (
                                 <div className="text-[7px] text-amber-500 font-bold mt-0.5">partial</div>
                               )}
@@ -298,9 +306,8 @@ export function WeeklyPlanner() {
           initialRows={editorCell.initial}
           jobs={jobs}
           staffEvents={staffEvents}
-          overrideOverbooking={settings.overrideOverbooking}
           anchor={editorCell.anchor}
-          onCommit={rows => commitCellEntries(editorCell.date, editorCell.staffId, rows)}
+          onCommit={(rows, overtime) => commitCellEntries(editorCell.date, editorCell.staffId, rows, overtime)}
           onClose={() => setEditorCell(null)}
         />
       )}

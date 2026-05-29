@@ -18,6 +18,7 @@ import { TradeSchoolPanel } from './components/TradeSchoolPanel';
 import { SimproPanel } from './components/SimproPanel';
 import { JobDetailModal } from './components/JobDetailModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { TooltipProvider } from './components/ui/tooltip';
 import { getWeekWorkingDays, toDateString } from './utils/dateUtils';
 import { computeWeeklyMetrics } from './utils/schedulingEngine';
 import './index.css';
@@ -174,9 +175,9 @@ function AppShell() {
                 </div>
               </div>
             )}
-            {activeTab === 'events' && <div className="max-w-3xl"><TradeSchoolPanel /></div>}
-            {activeTab === 'simpro' && <div className="max-w-3xl"><SimproPanel /></div>}
-            {activeTab === 'settings' && <SettingsPanel />}
+            {activeTab === 'events' && <div className="max-w-5xl mx-auto"><TradeSchoolPanel /></div>}
+            {activeTab === 'simpro' && <div className="max-w-3xl mx-auto"><SimproPanel /></div>}
+            {activeTab === 'settings' && <SettingsPanel onOpenSimpro={() => setActiveTab('simpro')} />}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -193,8 +194,10 @@ export default function App() {
     <ErrorBoundary>
       <AppProvider>
         <JobModalProvider>
-          <AppShell />
-          <Toaster position="top-right" richColors closeButton />
+          <TooltipProvider delayDuration={200}>
+            <AppShell />
+            <Toaster position="top-right" richColors closeButton />
+          </TooltipProvider>
         </JobModalProvider>
       </AppProvider>
     </ErrorBoundary>

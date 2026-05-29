@@ -10,6 +10,7 @@ import { addDays, format } from 'date-fns';
 import { useApp } from '../context/AppContext';
 import { getWorkingDays, toDateString, fromDateString } from '../utils/dateUtils';
 import { Users, Info, RotateCcw } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 
 export function DailyStaffAssignment({ job, onClose }) {
   const { state, updateJobNoReschedule, runAutoSchedule } = useApp();
@@ -53,6 +54,15 @@ export function DailyStaffAssignment({ job, onClose }) {
     updateJobNoReschedule({ ...job, dailyStaffOverrides: updated });
   }
 
+  // Bulk: revert every custom day back to the job's default assigned staff.
+  function resetAllOverrides() {
+    const count = Object.keys(job.dailyStaffOverrides ?? {}).length;
+    if (count === 0) return;
+    if (!confirm(`Reset all ${count} custom day${count !== 1 ? 's' : ''} to the job's default staff? This can't be undone.`)) return;
+    dirtyRef.current = true;
+    updateJobNoReschedule({ ...job, dailyStaffOverrides: {} });
+  }
+
   function getEventForDay(staffId, dateStr) {
     return staffEvents.find(e => e.staffId === staffId && e.date === dateStr);
   }
@@ -64,6 +74,8 @@ export function DailyStaffAssignment({ job, onClose }) {
       return getStaffForDay(dateStr).includes(staffId);
     }).length;
   }
+
+  const overrideCount = Object.keys(job.dailyStaffOverrides ?? {}).length;
 
   return (
     <div className="space-y-4">
@@ -95,7 +107,7 @@ export function DailyStaffAssignment({ job, onClose }) {
                   </div>
                 </th>
               ))}
-              <th className="px-2 text-slate-400 font-normal">Reset</th>
+              <th className="px-2"><span className="sr-only">Reset</span></th>
             </tr>
           </thead>
           <tbody>
@@ -153,11 +165,16 @@ export function DailyStaffAssignment({ job, onClose }) {
                   })}
                   <td className="text-center px-2">
                     {hasOverride && (
-                      <button onClick={() => clearDayOverride(dateStr)}
-                        className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600"
-                        title="Reset to default">
-                        <RotateCcw size={10} />
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button onClick={() => clearDayOverride(dateStr)}
+                            aria-label="Reset to default"
+                            className="p-1.5 rounded-md text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors">
+                            <RotateCcw size={11} />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">Reset to default</TooltipContent>
+                      </Tooltip>
                     )}
                   </td>
                 </tr>
@@ -169,8 +186,16 @@ export function DailyStaffAssignment({ job, onClose }) {
 
       {/* Summary */}
       <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-        <div className="text-xs text-slate-500">
-          {Object.keys(job.dailyStaffOverrides ?? {}).length} day{Object.keys(job.dailyStaffOverrides ?? {}).length !== 1 ? 's' : ''} with custom staff · <span className="text-emerald-600 font-medium">saved automatically</span>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="text-xs text-slate-500">
+            {overrideCount} day{overrideCount !== 1 ? 's' : ''} with custom staff · <span className="text-emerald-600 font-medium">saved automatically</span>
+          </div>
+          {overrideCount > 0 && (
+            <button onClick={resetAllOverrides}
+              className="flex items-center gap-1 flex-shrink-0 text-[11px] font-semibold text-slate-500 hover:text-amber-700 px-2 py-1 rounded-md hover:bg-amber-50 transition-colors">
+              <RotateCcw size={11} /> Reset all days
+            </button>
+          )}
         </div>
         <button onClick={onClose}
           className="px-4 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700">

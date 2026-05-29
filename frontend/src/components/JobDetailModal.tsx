@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Edit2, CheckCircle, PauseCircle, Clock,
-  Users, AlertTriangle, ChevronRight, CalendarDays, BarChart2
+  Users, AlertTriangle, RotateCcw, Play, CalendarDays, BarChart2
 } from 'lucide-react';
 import { differenceInCalendarDays } from 'date-fns';
 import { useApp } from '../context/AppContext';
@@ -89,6 +89,29 @@ function JobDetailModalInner({ job }: { job: Job }) {
   }, 0);
 
   const allocUtilisation = totalStaffAvailable > 0 ? (scheduledHours / totalStaffAvailable) : 0;
+
+  // Overtime attributed to this job: for each (staff, day) the job touches, the
+  // staff's excess over daily capacity, weighted by this job's share of that day.
+  const allDayStaffHours = new Map<string, number>();
+  for (const e of scheduleEntries) {
+    const k = `${e.staffId}|${e.date}`;
+    allDayStaffHours.set(k, (allDayStaffHours.get(k) ?? 0) + e.hours);
+  }
+  const jobDayStaffHours = new Map<string, number>();
+  for (const e of jobEntries) {
+    const k = `${e.staffId}|${e.date}`;
+    jobDayStaffHours.set(k, (jobDayStaffHours.get(k) ?? 0) + e.hours);
+  }
+  let overtimeHours = 0;
+  for (const [k, jobHrs] of jobDayStaffHours) {
+    const [staffId, date] = k.split('|');
+    const member = staff.find(s => s.id === staffId);
+    if (!member) continue;
+    const dayTotal = allDayStaffHours.get(k) ?? 0;
+    const excess = Math.max(0, dayTotal - getEffectiveAvailable(member, date, staffEvents));
+    if (excess > 0 && dayTotal > 0) overtimeHours += excess * (jobHrs / dayTotal);
+  }
+  const overtimeHeadroom = Math.max(0, totalStaffAvailable - scheduledHours);
 
   // Per-day hours for mini-grid (first 14 working days)
   const displayDays = workDays.slice(0, 14);
@@ -412,17 +435,19 @@ function JobDetailModalInner({ job }: { job: Job }) {
                 </div>
                 <table className="w-full text-xs">
                   <tbody>
-                    {[
+                    {([
                       { label: 'Estimated Hours', value: `${job.estimatedHours}h` },
                       { label: 'Remaining Hours', value: `${remainingHours.toFixed(1)}h` },
                       { label: 'Scheduled Hours', value: `${scheduledHours.toFixed(1)}h`, highlight: scheduledHours >= job.estimatedHours * 0.85 },
                       { label: 'Total Staff Capacity', value: `${totalStaffAvailable.toFixed(0)}h` },
+                      { label: 'Overtime Hours', value: `${overtimeHours.toFixed(1)}h`, amber: overtimeHours > 0.05 },
+                      { label: 'Overtime Headroom', value: `${overtimeHeadroom.toFixed(0)}h` },
                       { label: 'Working Days', value: `${workDays.length} days` },
                       { label: 'Job Utilisation', value: `${Math.round(allocUtilisation*100)}%` },
-                    ].map(row => (
+                    ] as { label: string; value: string; highlight?: boolean; amber?: boolean }[]).map(row => (
                       <tr key={row.label} className="border-b border-slate-50">
                         <td className="px-4 py-2 text-slate-500">{row.label}</td>
-                        <td className={`px-4 py-2 font-semibold text-right ${row.highlight ? 'text-emerald-600' : 'text-slate-800'}`}>
+                        <td className={`px-4 py-2 font-semibold text-right ${row.highlight ? 'text-emerald-600' : row.amber ? 'text-amber-600' : 'text-slate-800'}`}>
                           {row.value}
                         </td>
                       </tr>
@@ -440,24 +465,30 @@ function JobDetailModalInner({ job }: { job: Job }) {
             className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 text-white text-xs font-semibold rounded-xl hover:bg-amber-700 transition-colors">
             <Edit2 size={12}/> Edit
           </button>
-          {job.status !== 'completed' && (
-            <button onClick={() => { updateJob({ ...job, status: 'completed', ...applyStatusChange(job, 'completed') }); closeJob(); }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-xl hover:bg-emerald-100 border border-emerald-200 transition-colors">
+          {/* Status toggles — pushed right (ml-auto), away from Edit, to avoid mis-clicks.
+              Complete keeps the modal open so an accidental click is one tap to undo. */}
+          {job.status !== 'completed' ? (
+            <button onClick={() => updateJob({ ...job, status: 'completed', ...applyStatusChange(job, 'completed') })}
+              className="ml-auto flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-xl hover:bg-emerald-100 border border-emerald-200 transition-colors">
               <CheckCircle size={12}/> Complete
             </button>
+          ) : (
+            <button onClick={() => updateJob({ ...job, status: 'inProgress', ...applyStatusChange(job, 'inProgress') })}
+              className="ml-auto flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-200 border border-slate-200 transition-colors">
+              <RotateCcw size={12}/> Incomplete
+            </button>
           )}
-          {job.status !== 'onHold' && job.status !== 'completed' && (
+          {job.status === 'onHold' ? (
+            <button onClick={() => updateJob({ ...job, status: 'inProgress', ...applyStatusChange(job, 'inProgress') })}
+              className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 text-xs font-semibold rounded-xl hover:bg-amber-100 border border-amber-200 transition-colors">
+              <Play size={12}/> Resume
+            </button>
+          ) : job.status !== 'completed' ? (
             <button onClick={() => updateJob({ ...job, status: 'onHold', ...applyStatusChange(job, 'onHold') })}
               className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 text-xs font-semibold rounded-xl hover:bg-amber-100 border border-amber-200 transition-colors">
               <PauseCircle size={12}/> Hold
             </button>
-          )}
-          {job.status === 'onHold' && (
-            <button onClick={() => updateJob({ ...job, status: 'scheduled', ...applyStatusChange(job, 'scheduled') })}
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 text-xs font-semibold rounded-xl hover:bg-amber-100 border border-amber-200 transition-colors">
-              <ChevronRight size={12}/> Resume
-            </button>
-          )}
+          ) : null}
         </div>
       </motion.div>
 

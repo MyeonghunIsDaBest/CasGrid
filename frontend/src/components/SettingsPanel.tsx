@@ -1,10 +1,18 @@
 import { useRef } from 'react';
 import { motion } from 'framer-motion';
-import { Download, Upload, Shield, Calendar, Zap } from 'lucide-react';
+import {
+  Download, Upload, Shield, Zap, Settings, Database, Link2, ArrowRight, Table2,
+} from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { SimproConnectionSettings } from './SimproConnectionSettings';
 
-export function SettingsPanel() {
-  const { state, updateSettings, exportData, importData } = useApp();
+interface SettingsPanelProps {
+  /** Jump to the Simpro workspace tab (import/push/messages live there). */
+  onOpenSimpro?: () => void;
+}
+
+export function SettingsPanel({ onOpenSimpro }: SettingsPanelProps) {
+  const { state, updateSettings, exportData, importData, syncStatus } = useApp();
   const { settings } = state;
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -19,30 +27,47 @@ export function SettingsPanel() {
     reader.readAsText(file);
   }
 
-  return (
-    <div className="max-w-lg space-y-6">
-      <h2 className="font-semibold text-slate-800">Settings</h2>
+  // ── Live Supabase status ──
+  const supa =
+    syncStatus === 'live'    ? { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Connected · Live' } :
+    syncStatus === 'offline' ? { dot: 'bg-red-500',     text: 'text-red-500',     label: 'Offline' } :
+                               { dot: 'bg-amber-400',   text: 'text-amber-600',   label: 'Reconnecting…' };
 
-      {/* Scheduling */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-          <Zap size={14} className="text-amber-500" /> Scheduling
+  const card = "bg-white rounded-xl border border-slate-200 shadow-sm";
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-5">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+          <Settings size={18} className="text-slate-600" />
+        </div>
+        <div>
+          <h2 className="font-semibold text-slate-800">Settings</h2>
+          <p className="text-xs text-slate-500">Scheduling rules, your data, and integrations for CasGrid</p>
+        </div>
+      </div>
+
+      {/* ── Scheduling ── */}
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.02 }}
+        className={`${card} p-5 space-y-4`}>
+        <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><Zap size={14} className="text-amber-500" /></span>
+          Scheduling
         </h3>
 
         <label className="flex items-start gap-3 cursor-pointer">
-          <div className="mt-0.5">
-            <input
-              type="checkbox"
-              checked={settings.overrideOverbooking}
-              onChange={e => updateSettings({ overrideOverbooking: e.target.checked })}
-              className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
-            />
-          </div>
+          <input
+            type="checkbox"
+            checked={settings.overrideOverbooking}
+            onChange={e => updateSettings({ overrideOverbooking: e.target.checked })}
+            className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+          />
           <div>
             <div className="text-sm font-medium text-slate-800">Allow overbooking</div>
             <div className="text-xs text-slate-500 mt-0.5">
-              When enabled, the scheduler can assign up to 150% of daily capacity
-              to a staff member to fit urgent jobs.
+              When enabled, the auto-scheduler can assign up to 150% of daily capacity to a staff
+              member to fit urgent jobs. (Per-day overtime in the planner is always allowed.)
             </div>
           </div>
         </label>
@@ -51,16 +76,14 @@ export function SettingsPanel() {
           <div>
             <div className="text-sm font-medium text-slate-800 mb-1">Weekly capacity</div>
             <p className="text-xs text-slate-500 mb-2">
-              Baseline = the team-hours you're currently expected to schedule.
-              Stretch = the target you're pushing toward. Shown above the Timeline.
+              Baseline = the team-hours you're currently expected to schedule. Stretch = the target
+              you're pushing toward. Shown above the Timeline.
             </p>
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs text-slate-600">
                 <span className="block mb-1">Baseline (h/week)</span>
                 <input
-                  type="number"
-                  min={0}
-                  step={5}
+                  type="number" min={0} step={5}
                   value={settings.capacityTargets?.weeklyBaseline ?? 240}
                   onChange={e => updateSettings({
                     capacityTargets: {
@@ -74,9 +97,7 @@ export function SettingsPanel() {
               <label className="text-xs text-slate-600">
                 <span className="block mb-1">Stretch target (h/week)</span>
                 <input
-                  type="number"
-                  min={0}
-                  step={5}
+                  type="number" min={0} step={5}
                   value={settings.capacityTargets?.weeklyStretch ?? 350}
                   onChange={e => updateSettings({
                     capacityTargets: {
@@ -91,68 +112,84 @@ export function SettingsPanel() {
           </div>
 
           <p className="text-xs text-slate-500">
-            <strong>Working days:</strong> Monday to Friday (fixed). Future version will support custom working days and public holiday exclusions.
+            <strong>Working days:</strong> Monday to Friday (fixed). A future version will support custom working days and public-holiday exclusions.
           </p>
         </div>
-      </div>
+      </motion.div>
 
-      {/* Data management */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-          <Shield size={14} className="text-slate-500" /> Data Management
+      {/* ── Data Management ── */}
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.06 }}
+        className={`${card} p-5 space-y-4`}>
+        <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center"><Shield size={14} className="text-slate-500" /></span>
+          Data Management
         </h3>
-
         <p className="text-xs text-slate-500">
           All data lives in your Supabase project and syncs live across every device.
           Use export/import to back up or transfer your schedule.
         </p>
-
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={exportData}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors font-medium"
-          >
+          <button onClick={exportData}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors font-medium">
             <Download size={14} /> Export JSON
           </button>
-
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-slate-50 text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors font-medium"
-          >
+          <button onClick={() => fileRef.current?.click()}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-slate-50 text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors font-medium">
             <Upload size={14} /> Import JSON
           </button>
         </div>
-
         <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
-      </div>
+      </motion.div>
 
-      {/* Integration notes */}
-      <div className="bg-slate-50 rounded-xl border border-slate-200 p-5">
-        <h3 className="text-sm font-semibold text-slate-700 mb-3">Integration Roadmap</h3>
-        <div className="space-y-3 text-xs text-slate-600">
-          <div className="flex gap-2">
-            <span className="text-amber-500 font-bold mt-0.5">→</span>
-            <div>
-              <strong>Supabase:</strong> Replace localStorage with Supabase client. AppContext actions map 1:1 to table operations.
-              Add auth for multi-user access. Enable real-time sync via Supabase Realtime channels.
+      {/* ── Integrations ── */}
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+        className={`${card} p-5 space-y-4`}>
+        <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-sky-50 flex items-center justify-center"><Link2 size={14} className="text-sky-500" /></span>
+          Integrations
+        </h3>
+
+        {/* Supabase — live status */}
+        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0"><Database size={14} className="text-emerald-500" /></span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-slate-800">Supabase</div>
+              <div className="text-xs text-slate-400 truncate">Real-time sync across every device</div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <span className="text-green-500 font-bold mt-0.5">→</span>
-            <div>
-              <strong>Google Sheets:</strong> Use Google Apps Script or Sheets API to read/write staff, jobs, and schedule_entries tabs.
-              The JSON export format maps directly to spreadsheet rows.
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <span className="text-purple-500 font-bold mt-0.5">→</span>
-            <div>
-              <strong>Simpro:</strong> Map Job entities to Simpro quotes/jobs via REST API.
-              Pull estimated hours from Simpro cost centres into estimatedHours field.
-            </div>
+          <span className={`flex items-center gap-1.5 text-xs font-medium flex-shrink-0 ${supa.text}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${supa.dot} ${syncStatus !== 'live' ? 'animate-pulse' : ''}`} />
+            {supa.label}
+          </span>
+        </div>
+
+        {/* Simpro — shared connection editor (synced with the Simpro workspace) */}
+        <div className="space-y-1.5">
+          <SimproConnectionSettings />
+          <div className="flex items-center justify-between gap-3 px-1">
+            <p className="text-[10px] text-slate-400 leading-snug">
+              Live API needs a backend proxy (CORS). Field mapping, import, push &amp; messages live in the workspace.
+            </p>
+            <button onClick={() => onOpenSimpro?.()}
+              className="flex items-center gap-1 text-xs font-semibold text-orange-600 hover:text-orange-700 flex-shrink-0 whitespace-nowrap">
+              Open Simpro workspace <ArrowRight size={12} />
+            </button>
           </div>
         </div>
-      </div>
+
+        {/* Google Sheets — planned */}
+        <div className="flex items-center justify-between rounded-lg border border-dashed border-slate-200 px-3 py-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0"><Table2 size={14} className="text-slate-400" /></span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-slate-600">Google Sheets</div>
+              <div className="text-xs text-slate-400 truncate">Read/write staff, jobs &amp; schedule tabs</div>
+            </div>
+          </div>
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-400 ring-1 ring-slate-200/70 flex-shrink-0">Planned</span>
+        </div>
+      </motion.div>
     </div>
   );
 }

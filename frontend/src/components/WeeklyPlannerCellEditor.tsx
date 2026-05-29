@@ -10,7 +10,7 @@
  * write. That keeps the bug surface small and the data flow obvious.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Plus, AlertTriangle } from 'lucide-react';
+import { X, Plus, AlertTriangle, Zap } from 'lucide-react';
 import type { Job, Staff } from '../types';
 import { format } from 'date-fns';
 import { fromDateString } from '../utils/dateUtils';
@@ -30,9 +30,8 @@ interface Props {
   initialRows: EditorRow[];
   jobs: Job[];
   staffEvents: import('../types').StaffEvent[];
-  overrideOverbooking: boolean;
   anchor: { top: number; left: number } | null;
-  onCommit: (rows: { jobId: string; hours: number }[]) => void;
+  onCommit: (rows: { jobId: string; hours: number }[], overtime: boolean) => void;
   onClose: () => void;
 }
 
@@ -42,7 +41,6 @@ export function WeeklyPlannerCellEditor({
   initialRows,
   jobs,
   staffEvents,
-  overrideOverbooking,
   anchor,
   onCommit,
   onClose,
@@ -98,7 +96,9 @@ export function WeeklyPlannerCellEditor({
   const total = rows.reduce((s, r) => s + (Number.isFinite(r.hours) ? r.hours : 0), 0);
   const available = getEffectiveAvailable(staff, date, staffEvents);
   const overBudget = total > available + 0.01;
-  const blockedByOverbook = overBudget && !overrideOverbooking;
+  const overtimeHours = Math.max(0, total - available);
+  const extreme = available > 0 && total > available * 1.5;
+  const fmtOt = overtimeHours % 1 === 0 ? overtimeHours.toString() : overtimeHours.toFixed(1);
 
   function updateRow(idx: number, patch: Partial<EditorRow>) {
     setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r));
@@ -111,11 +111,11 @@ export function WeeklyPlannerCellEditor({
   }
 
   function handleSave() {
-    if (blockedByOverbook) return;
     onCommit(
       rows
         .filter(r => r.jobId && Number.isFinite(r.hours) && r.hours > 0)
         .map(r => ({ jobId: r.jobId, hours: r.hours })),
+      overBudget,
     );
   }
 
@@ -174,19 +174,25 @@ export function WeeklyPlannerCellEditor({
           </span>
           <div className="flex items-center gap-1.5">
             <span className={`text-[11px] font-bold tabular-nums ${
-              overBudget ? 'text-red-600' : total >= available * 0.95 ? 'text-amber-600' : 'text-slate-700'
+              overBudget ? 'text-amber-700' : total >= available * 0.95 ? 'text-amber-600' : 'text-slate-700'
             }`}>
               {total.toFixed(1)} / {available.toFixed(0)}h
             </span>
             {overBudget && (
-              <span className={`flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                blockedByOverbook ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'
-              }`}>
-                <AlertTriangle size={9} /> {blockedByOverbook ? 'OVER' : 'OVER (allowed)'}
+              <span className="flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">
+                <AlertTriangle size={9} /> OT +{fmtOt}h
               </span>
             )}
           </div>
         </div>
+
+        {/* Extreme-overtime nudge — never blocks, just a sanity check */}
+        {extreme && (
+          <div className="px-3 py-1.5 border-b border-amber-100 bg-amber-50/60 text-[10px] text-amber-700 flex items-center gap-1">
+            <AlertTriangle size={10} className="flex-shrink-0" />
+            Well over capacity — double-check the hours.
+          </div>
+        )}
 
         {/* Rows */}
         <div className="px-3 py-2 space-y-1.5 max-h-60 overflow-y-auto">
@@ -270,15 +276,12 @@ export function WeeklyPlannerCellEditor({
           </button>
           <button
             onClick={handleSave}
-            disabled={blockedByOverbook}
-            className={`flex items-center gap-1 px-3 py-1 text-[11px] font-semibold rounded transition-colors ${
-              blockedByOverbook
-                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                : 'bg-amber-600 text-white hover:bg-amber-700'
-            }`}
-            title={blockedByOverbook ? 'Enable "Allow overbooking" in Settings to save over capacity.' : undefined}
+            className="flex items-center gap-1 px-3 py-1 text-[11px] font-semibold rounded transition-colors bg-amber-600 text-white hover:bg-amber-700"
+            title={overBudget ? `Save with ${fmtOt}h of overtime` : undefined}
           >
-            <Plus size={11} className={blockedByOverbook ? 'opacity-50' : 'opacity-80'} /> Save
+            {overBudget
+              ? <><Zap size={11} className="opacity-90" /> Save +{fmtOt}h OT</>
+              : <><Plus size={11} className="opacity-80" /> Save</>}
           </button>
         </div>
       </div>

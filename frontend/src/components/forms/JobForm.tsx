@@ -6,6 +6,7 @@ import { Job, JobStatus, JobPriority } from '../../types';
 import { toDateString, fromDateString, getWorkingDays } from '../../utils/dateUtils';
 import { addDays } from 'date-fns';
 import { getRunningTimeMs, isJobRunning, useRunningTimeNow, fromManualHours, applyStatusChange, isActiveStatus } from '../../utils/runningTime';
+import { DateField } from '../ui/date-field';
 
 const JOB_COLOURS = [
   '#3b82f6', '#ef4444', '#f59e0b', '#10b981', '#8b5cf6',
@@ -265,20 +266,17 @@ export function JobForm({ job, onClose }: Props) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">Start Date</label>
-              <input
-                type="date"
+              <DateField
                 value={form.startDate}
-                onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                onChange={v => setForm(f => ({ ...f, startDate: v }))}
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">Deadline *</label>
-              <input
-                type="date"
+              <DateField
                 value={form.deadline}
-                onChange={e => setForm(f => ({ ...f, deadline: e.target.value }))}
-                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 ${errors.deadline ? 'border-red-400' : 'border-slate-200'}`}
+                onChange={v => setForm(f => ({ ...f, deadline: v }))}
+                error={!!errors.deadline}
               />
               {errors.deadline && <p className="text-xs text-red-500 mt-1">{errors.deadline}</p>}
             </div>

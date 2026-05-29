@@ -14,6 +14,7 @@ import { useMemo } from 'react';
 import { toDateString } from '../../utils/dateUtils';
 import { computeWeeklyMetrics } from '../../utils/schedulingEngine';
 import { LiveBadge } from '../LiveBadge';
+import { CapacityTargetsControl } from './CapacityTargetsControl';
 
 export function WeeklyCapacityHeader({
   days,
@@ -27,6 +28,15 @@ export function WeeklyCapacityHeader({
 }) {
   const baseline = Math.max(0, capacityTargets?.weeklyBaseline ?? 240);
   const stretch  = Math.max(baseline, capacityTargets?.weeklyStretch  ?? 350);
+
+  // Theoretical max weekly team-hours (active billable staff × Mon–Fri),
+  // used to scale the targets slider. 0 → control falls back to a sensible max.
+  const teamWeeklyHours = useMemo(
+    () => staff
+      .filter(s => s.active && s.isBillable)
+      .reduce((sum, s) => sum + (s.dailyAvailableHours || 0), 0) * 5,
+    [staff],
+  );
 
   // Each week column = a contiguous slice of `days`. Build the slice indices
   // from the same `weeks` array the day header uses so things stay aligned.
@@ -48,6 +58,9 @@ export function WeeklyCapacityHeader({
             Weekly capacity
           </span>
           <LiveBadge compact />
+          <div className="ml-auto -mr-1">
+            <CapacityTargetsControl baseline={baseline} stretch={stretch} maxHours={teamWeeklyHours} />
+          </div>
         </div>
         <div className="text-[9px] text-slate-400 mt-0.5 tabular-nums">
           baseline {baseline}h · stretch {stretch}h
@@ -68,14 +81,20 @@ export function WeeklyCapacityHeader({
           );
 
           const allocated = metrics.allocatedHours;
-          const total = stretch; // bar's full width represents the stretch target
-          const baselineEnd = total > 0 ? (baseline / total) * 100 : 0;
-          const fillPct = total > 0 ? Math.min(100, (allocated / total) * 100) : 0;
-          const overPct = allocated > stretch && total > 0 ? Math.min(100, ((allocated - stretch) / total) * 100) : 0;
-          const overSegmentColour = '#dc2626'; // red
           const inStretch = allocated > baseline;
           const toStretch = Math.max(0, stretch - allocated);
           const overStretchAmount = Math.max(0, allocated - stretch);
+
+          // Bar scales to whichever is larger — the stretch target or the actual
+          // allocation — so an over-capacity week shows a proportional red
+          // overflow past the stretch tick instead of flooding the whole bar.
+          const peak = Math.max(stretch, allocated, 1);
+          const pctOf = (h: number) => Math.min(100, (h / peak) * 100);
+          const baselinePos = (baseline / peak) * 100;
+          const stretchPos = (stretch / peak) * 100;
+          const slateW = pctOf(Math.min(allocated, baseline));
+          const amberW = Math.max(0, pctOf(Math.min(allocated, stretch)) - baselinePos);
+          const overW = allocated > stretch ? pctOf(allocated) - stretchPos : 0;
 
           return (
             <div
@@ -99,33 +118,33 @@ export function WeeklyCapacityHeader({
                 </span>
               </div>
 
-              {/* Segmented bar */}
+              {/* Segmented bar: slate 0→baseline, amber baseline→stretch, red past stretch */}
               <div className="relative h-2 bg-slate-100 rounded-full overflow-hidden">
-                {/* Base fill: slate up to baseline, amber baseline→stretch */}
                 <div
                   className="absolute top-0 left-0 bottom-0 bg-slate-600"
-                  style={{ width: `${Math.min(fillPct, baselineEnd)}%` }}
+                  style={{ width: `${slateW}%` }}
                 />
-                {fillPct > baselineEnd && (
+                {amberW > 0 && (
                   <div
                     className="absolute top-0 bottom-0 bg-amber-500"
-                    style={{ left: `${baselineEnd}%`, width: `${Math.min(fillPct - baselineEnd, 100 - baselineEnd)}%` }}
+                    style={{ left: `${baselinePos}%`, width: `${amberW}%` }}
                   />
                 )}
-                {overPct > 0 && (
+                {overW > 0 && (
                   <div
-                    className="absolute top-0 bottom-0"
-                    style={{ left: `0%`, right: 0, backgroundColor: overSegmentColour, opacity: 0.85 }}
+                    className="absolute top-0 bottom-0 bg-red-600"
+                    style={{ left: `${stretchPos}%`, width: `${overW}%` }}
                   />
                 )}
                 {/* Baseline tick */}
                 <div
                   className="absolute top-[-2px] bottom-[-2px] w-px bg-slate-400/70 pointer-events-none"
-                  style={{ left: `${baselineEnd}%` }}
+                  style={{ left: `${baselinePos}%` }}
                 />
-                {/* Stretch tick (right edge) */}
+                {/* Stretch tick */}
                 <div
-                  className="absolute top-[-2px] bottom-[-2px] right-0 w-px bg-slate-500/70 pointer-events-none"
+                  className="absolute top-[-2px] bottom-[-2px] w-px bg-slate-500/70 pointer-events-none"
+                  style={{ left: `${stretchPos}%` }}
                 />
               </div>
             </div>

@@ -144,6 +144,7 @@ function fromDbEntry(r: Record<string, unknown>): ScheduleEntry {
     date:             r.date             as string,
     hours:            Number(r.hours) || 0,
     isManualOverride: (r.is_manual_override as boolean) ?? false,
+    isOvertime:       (r.is_overtime as boolean) ?? false,
   };
 }
 
@@ -155,6 +156,7 @@ function toDbEntry(e: ScheduleEntry) {
     date:               e.date,
     hours:              e.hours,
     is_manual_override: e.isManualOverride,
+    is_overtime:        e.isOvertime ?? false,
     updated_at:         new Date().toISOString(),
   };
 }

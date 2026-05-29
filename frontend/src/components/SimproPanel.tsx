@@ -17,9 +17,10 @@ import { useApp } from '../context/AppContext';
 import { toDateString } from '../utils/dateUtils';
 import {
   Link2, Link2Off, RefreshCw, Upload, Download, CheckCircle,
-  AlertTriangle, ExternalLink, Send, Settings2, Info, Lock, Zap
+  AlertTriangle, ExternalLink, Send, Settings2, Info, Zap
 } from 'lucide-react';
 import { generateId } from '../utils/schedulingEngine';
+import { SimproConnectionSettings } from './SimproConnectionSettings';
 
 type SyncStatus = 'idle' | 'testing' | 'syncing' | 'success' | 'error';
 
@@ -164,79 +165,21 @@ export function SimproPanel() {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-slate-200 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-slate-700">Connection Settings</h3>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={simproConfig.enabled}
-                  onChange={e => updateSimproConfig({ enabled: e.target.checked })}
-                  className="rounded border-slate-300 text-orange-500 focus:ring-orange-400" />
-                <span className="text-sm font-medium text-slate-700">Enable Integration</span>
-              </label>
-            </div>
+          {/* Shared connection editor — identical to (and synced with) Settings → Integrations */}
+          <SimproConnectionSettings />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Simpro Subdomain</label>
-                <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden focus-within:ring-1 focus-within:ring-orange-400">
-                  <span className="px-2 py-2 bg-slate-50 text-xs text-slate-500 border-r border-slate-200">https://</span>
-                  <input value={simproConfig.subdomain}
-                    onChange={e => updateSimproConfig({ subdomain: e.target.value })}
-                    placeholder="casone"
-                    className="flex-1 px-2 py-2 text-sm focus:outline-none" />
-                  <span className="px-2 py-2 bg-slate-50 text-xs text-slate-500 border-l border-slate-200">.simprosuite.com</span>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Company / Branch ID</label>
-                <input value={simproConfig.companyId}
-                  onChange={e => updateSimproConfig({ companyId: e.target.value })}
-                  placeholder="0"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-400" />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  <Lock size={10} className="inline mr-1" />API Token (Settings → API → Generate)
-                </label>
-                <input type="password" value={simproConfig.apiToken}
-                  onChange={e => updateSimproConfig({ apiToken: e.target.value })}
-                  placeholder="Bearer token from Simpro API settings"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-400 font-mono" />
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center gap-3 pt-4 border-t border-slate-100">
-              <button onClick={testConnection}
-                className="flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors">
-                {status === 'testing' ? <RefreshCw size={13} className="animate-spin" /> : <Link2 size={13} />}
-                Test Connection
-              </button>
-              <a href={`https://${simproConfig.subdomain || 'your-company'}.simprosuite.com/settings/api`}
-                target="_blank" rel="noopener"
-                className="flex items-center gap-1 text-xs text-slate-500 hover:text-orange-600">
-                <ExternalLink size={12} /> Get API token
-              </a>
-            </div>
-          </div>
-
-          {/* Auto-sync options */}
-          <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-slate-700">Sync Options</h3>
-            {[
-              { key: 'autoSyncOnSave', label: 'Auto-push to Simpro when schedule changes', desc: 'Every schedule update triggers a Simpro API call' },
-              { key: 'sendClientMessages', label: 'Send client messages via Simpro on push', desc: 'Creates Simpro activity notes that trigger client SMS/email' },
-            ].map(opt => (
-              <label key={opt.key} className="flex items-start gap-3 cursor-pointer">
-                <input type="checkbox"
-                  checked={simproConfig[opt.key]}
-                  onChange={e => updateSimproConfig({ [opt.key]: e.target.checked })}
-                  className="mt-0.5 rounded border-slate-300 text-orange-500 focus:ring-orange-400" />
-                <div>
-                  <div className="text-sm font-medium text-slate-700">{opt.label}</div>
-                  <div className="text-xs text-slate-400">{opt.desc}</div>
-                </div>
-              </label>
-            ))}
+          {/* Connection test */}
+          <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3 flex-wrap">
+            <button onClick={testConnection}
+              className="flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors">
+              {status === 'testing' ? <RefreshCw size={13} className="animate-spin" /> : <Link2 size={13} />}
+              Test Connection
+            </button>
+            <a href={`https://${simproConfig.subdomain || 'your-company'}.simprosuite.com/settings/api`}
+              target="_blank" rel="noopener"
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-orange-600">
+              <ExternalLink size={12} /> Get API token
+            </a>
           </div>
 
           {/* Field mapping */}
