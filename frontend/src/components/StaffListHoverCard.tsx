@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * StaffListHoverCard — compact hover popover that lists multiple staff
  * (used for the "+N" overflow pill on job bars). One row per staff with

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useState } from 'react';
 import { Toaster } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,11 +17,10 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { TradeSchoolPanel } from './components/TradeSchoolPanel';
 import { SimproPanel } from './components/SimproPanel';
 import { JobDetailModal } from './components/JobDetailModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { getWeekWorkingDays, toDateString } from './utils/dateUtils';
 import { computeWeeklyMetrics } from './utils/schedulingEngine';
 import './index.css';
-
-type Tab = 'dashboard' | 'jobs' | 'staff' | 'timeline' | 'events' | 'simpro' | 'settings';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={15}/> },
@@ -192,11 +190,13 @@ function AppShell() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <JobModalProvider>
-        <AppShell />
-        <Toaster position="top-right" richColors closeButton />
-      </JobModalProvider>
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <JobModalProvider>
+          <AppShell />
+          <Toaster position="top-right" richColors closeButton />
+        </JobModalProvider>
+      </AppProvider>
+    </ErrorBoundary>
   );
 }

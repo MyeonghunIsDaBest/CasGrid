@@ -5,25 +5,30 @@
  * User can toggle which staff work on which day.
  * Changes are stored in job.dailyStaffOverrides and trigger re-schedule.
  */
-import { useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { addDays, format } from 'date-fns';
 import { useApp } from '../context/AppContext';
 import { getWorkingDays, toDateString, fromDateString } from '../utils/dateUtils';
 import { Users, Info, RotateCcw } from 'lucide-react';
 
 export function DailyStaffAssignment({ job, onClose }) {
-  const { state, updateJob } = useApp();
+  const { state, updateJobNoReschedule, runAutoSchedule } = useApp();
   const { staff, staffEvents } = state;
 
   const eligibleStaff = staff.filter(s => s.active && s.isBillable);
   const workDays = getWorkingDays(fromDateString(job.startDate), fromDateString(job.deadline));
 
-  // Local copy of overrides for live editing
-  const [overrides, setOverrides] = useState(() => ({ ...job.dailyStaffOverrides }));
+  // Autosave: every toggle persists + realtime-syncs immediately via
+  // updateJobNoReschedule (reads the live job, no local buffer). The heavier
+  // re-schedule is deferred to run once when this view unmounts (Done / X / tab
+  // switch), so ticking several staff doesn't recompute hours on every click.
+  const runAutoScheduleRef = useRef(runAutoSchedule);
+  useEffect(() => { runAutoScheduleRef.current = runAutoSchedule; });
+  const dirtyRef = useRef(false);
+  useEffect(() => () => { if (dirtyRef.current) runAutoScheduleRef.current(); }, []);
 
   function getStaffForDay(dateStr) {
-    if (overrides[dateStr] !== undefined) return overrides[dateStr];
-    return job.assignedStaffIds;
+    return job.dailyStaffOverrides?.[dateStr] ?? job.assignedStaffIds;
   }
 
   function toggleStaffOnDay(dateStr, staffId) {
@@ -31,28 +36,21 @@ export function DailyStaffAssignment({ job, onClose }) {
     const next = current.includes(staffId)
       ? current.filter(id => id !== staffId)
       : [...current, staffId];
-    // If next equals job.assignedStaffIds exactly, remove the override
+    // If next equals job.assignedStaffIds exactly, drop the override.
     const isDefault = next.length === job.assignedStaffIds.length &&
       next.every(id => job.assignedStaffIds.includes(id));
-    setOverrides(prev => {
-      const updated = { ...prev };
-      if (isDefault) delete updated[dateStr];
-      else updated[dateStr] = next;
-      return updated;
-    });
+    const updated = { ...job.dailyStaffOverrides };
+    if (isDefault) delete updated[dateStr];
+    else updated[dateStr] = next;
+    dirtyRef.current = true;
+    updateJobNoReschedule({ ...job, dailyStaffOverrides: updated });
   }
 
   function clearDayOverride(dateStr) {
-    setOverrides(prev => {
-      const updated = { ...prev };
-      delete updated[dateStr];
-      return updated;
-    });
-  }
-
-  function applyAll() {
-    updateJob({ ...job, dailyStaffOverrides: overrides });
-    onClose();
+    const updated = { ...job.dailyStaffOverrides };
+    delete updated[dateStr];
+    dirtyRef.current = true;
+    updateJobNoReschedule({ ...job, dailyStaffOverrides: updated });
   }
 
   function getEventForDay(staffId, dateStr) {
@@ -104,7 +102,7 @@ export function DailyStaffAssignment({ job, onClose }) {
             {workDays.map(day => {
               const dateStr = toDateString(day);
               const dayStaff = getStaffForDay(dateStr);
-              const hasOverride = overrides[dateStr] !== undefined;
+              const hasOverride = job.dailyStaffOverrides?.[dateStr] !== undefined;
               const dayName = format(day, 'EEE d MMM');
 
               return (
@@ -172,18 +170,12 @@ export function DailyStaffAssignment({ job, onClose }) {
       {/* Summary */}
       <div className="flex items-center justify-between pt-3 border-t border-slate-100">
         <div className="text-xs text-slate-500">
-          {Object.keys(overrides).length} day{Object.keys(overrides).length !== 1 ? 's' : ''} with custom staff assignments
+          {Object.keys(job.dailyStaffOverrides ?? {}).length} day{Object.keys(job.dailyStaffOverrides ?? {}).length !== 1 ? 's' : ''} with custom staff · <span className="text-emerald-600 font-medium">saved automatically</span>
         </div>
-        <div className="flex gap-2">
-          <button onClick={onClose}
-            className="px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">
-            Cancel
-          </button>
-          <button onClick={applyAll}
-            className="px-4 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700">
-            Save & Re-schedule
-          </button>
-        </div>
+        <button onClick={onClose}
+          className="px-4 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700">
+          Done
+        </button>
       </div>
     </div>
   );

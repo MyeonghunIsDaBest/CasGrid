@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * WeeklyPlannerCellEditor — popover anchored to a clicked planner cell.
  *

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * StaffHoverCard — wrap any element with a rich hover popover that shows
  * complete details about a staff member. Opens on mouse enter (after a

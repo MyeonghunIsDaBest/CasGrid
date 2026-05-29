@@ -74,6 +74,20 @@ export function getStaffForJobOnDate(job: Job, dateStr: string): string[] {
 }
 
 /**
+ * Every staff member assigned to a job, anywhere — the default roster
+ * (assignedStaffIds) UNION everyone named in any per-day override
+ * (dailyStaffOverrides). Used for the timeline staff dots, the job Overview,
+ * and the scheduler's "has staff?" check, so a job whose staff were set only
+ * via the Daily Staff tab still counts as staffed.
+ */
+export function getAllJobStaffIds(job: Job): string[] {
+  return [...new Set([
+    ...job.assignedStaffIds,
+    ...Object.values(job.dailyStaffOverrides ?? {}).flat(),
+  ])];
+}
+
+/**
  * Main auto-scheduler.
  */
 export function autoSchedule(
@@ -106,7 +120,7 @@ export function autoSchedule(
     .filter(j =>
       j.status !== 'completed' &&
       j.status !== 'onHold' &&
-      j.assignedStaffIds.length > 0 &&
+      getAllJobStaffIds(j).length > 0 &&
       getHoursToSchedule(j, lockedEntries) > 0
     )
     .sort((a, b) => {

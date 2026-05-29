@@ -1,19 +1,19 @@
-// @ts-nocheck
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Edit2, CheckCircle, PauseCircle, Clock,
-  Calendar, Users, AlertTriangle, ChevronRight, CalendarDays, BarChart2
+  Users, AlertTriangle, ChevronRight, CalendarDays, BarChart2
 } from 'lucide-react';
-import { differenceInCalendarDays, addDays } from 'date-fns';
+import { differenceInCalendarDays } from 'date-fns';
 import { useApp } from '../context/AppContext';
 import { useJobModal } from '../context/JobModalContext';
 import { JobForm } from './forms/JobForm';
 import { DailyStaffAssignment } from './DailyStaffAssignment';
-import { isJobAtRisk, getEffectiveAvailable, getRemainingHours } from '../utils/schedulingEngine';
+import { isJobAtRisk, getEffectiveAvailable, getRemainingHours, getAllJobStaffIds } from '../utils/schedulingEngine';
 import { getRunningTimeMs, formatRunningTime, isJobRunning, useRunningTimeNow, applyStatusChange } from '../utils/runningTime';
 import { fromDateString, toDateString, getWorkingDays } from '../utils/dateUtils';
 import { format } from 'date-fns';
+import type { Job } from '../types';
 
 const STATUS_COLOURS = {
   unscheduled: 'bg-slate-100 text-slate-600', scheduled: 'bg-sky-100 text-sky-700',
@@ -32,16 +32,26 @@ const PRIORITY_COLOURS = {
 type Panel = 'overview' | 'dailyStaff' | 'hoursBreakdown';
 
 export function JobDetailModal() {
+  // Outer guard — keeps hook count stable (2) regardless of whether a job is
+  // selected. The body that uses job-dependent hooks lives in JobDetailModalInner,
+  // which only mounts when `job` is non-null. This avoids "Rendered fewer hooks
+  // than expected" when the modal is closing (AnimatePresence keeps it mounted
+  // mid-exit while context updates re-render it with selectedJobId = null).
+  const { state } = useApp();
+  const { selectedJobId } = useJobModal();
+  const job = state.jobs.find(j => j.id === selectedJobId);
+  if (!job) return null;
+  return <JobDetailModalInner job={job} />;
+}
+
+function JobDetailModalInner({ job }: { job: Job }) {
   const { state, updateJob } = useApp();
-  const { selectedJobId, closeJob } = useJobModal();
+  const { closeJob } = useJobModal();
   const [showEditForm, setShowEditForm] = useState(false);
   const [activePanel, setActivePanel] = useState<Panel>('overview');
 
-  const job = state.jobs.find(j => j.id === selectedJobId);
-  if (!job) return null;
-
   const { staff, scheduleEntries, staffEvents } = state;
-  const assignedStaff = staff.filter(s => job.assignedStaffIds.includes(s.id));
+  const assignedStaff = staff.filter(s => getAllJobStaffIds(job).includes(s.id));
   const jobEntries = scheduleEntries.filter(e => e.jobId === job.id);
   const scheduledHours = jobEntries.reduce((s, e) => s + e.hours, 0);
   const remainingHours = getRemainingHours(job, scheduleEntries);
@@ -61,7 +71,7 @@ export function JobDetailModal() {
   const workDays = getWorkingDays(fromDateString(job.startDate), fromDateString(job.deadline));
 
   // Per-staff hours breakdown
-  const staffHoursMap = {};
+  const staffHoursMap: Record<string, number> = {};
   for (const s of assignedStaff) {
     staffHoursMap[s.id] = jobEntries.filter(e => e.staffId === s.id).reduce((sum, e) => sum + e.hours, 0);
   }
@@ -82,7 +92,7 @@ export function JobDetailModal() {
 
   // Per-day hours for mini-grid (first 14 working days)
   const displayDays = workDays.slice(0, 14);
-  const staffDayHours = {};
+  const staffDayHours: Record<string, Record<string, number>> = {};
   for (const s of assignedStaff) {
     staffDayHours[s.id] = {};
     for (const d of displayDays) staffDayHours[s.id][toDateString(d)] = 0;

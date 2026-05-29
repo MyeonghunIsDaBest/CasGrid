@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { differenceInCalendarDays, format, startOfDay } from 'date-fns';

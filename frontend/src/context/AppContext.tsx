@@ -199,6 +199,7 @@ interface AppContextType {
   deleteStaff:          (id: string)                  => void;
   addJob:               (j: Omit<Job,'id'>)           => void;
   updateJob:            (j: Job)                      => void;
+  updateJobNoReschedule:(j: Job)                      => void;
   deleteJob:            (id: string)                  => void;
   updateScheduleEntry:  (e: ScheduleEntry)            => void;
   deleteScheduleEntry:  (id: string)                  => void;
@@ -575,6 +576,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     noteLocal('jobs', 'update', `Job updated — ${j.jobName}`);
     persist('job', () => db.upsertJob(j));
   }
+  // Persist + realtime-sync a job WITHOUT triggering the auto-scheduler. Used by
+  // the Daily Staff tab's autosave: each toggle saves & syncs instantly, while
+  // the heavier re-schedule is deferred to run once when the tab closes.
+  function updateJobNoReschedule(j: Job) {
+    skipAutoScheduleRef.current = true;
+    dispatch({ type: 'UPDATE_JOB', payload: j });
+    noteLocal('jobs', 'update', `Staff updated — ${j.jobName}`);
+    persist('job', () => db.upsertJob(j));
+  }
   function deleteJob(id: string) {
     const name = state.jobs.find(x => x.id === id)?.jobName ?? 'job';
     dispatch({ type: 'DELETE_JOB', payload: id });
@@ -680,7 +690,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     state,
     syncStatus,
     addStaff, updateStaff, deleteStaff,
-    addJob, updateJob, deleteJob,
+    addJob, updateJob, updateJobNoReschedule, deleteJob,
     updateScheduleEntry, deleteScheduleEntry,
     addStaffEvent, updateStaffEvent, deleteStaffEvent,
     runAutoSchedule, updateSettings, updateSimproConfig,

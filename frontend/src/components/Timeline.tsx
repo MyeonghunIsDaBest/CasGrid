@@ -4,7 +4,7 @@ import { addDays, format, differenceInCalendarDays, isBefore, isAfter } from 'da
 import { useApp } from '../context/AppContext';
 import { useJobModal } from '../context/JobModalContext';
 import { toDateString, isToday } from '../utils/dateUtils';
-import { isJobAtRisk, getRemainingHours } from '../utils/schedulingEngine';
+import { isJobAtRisk, getRemainingHours, getAllJobStaffIds } from '../utils/schedulingEngine';
 import { AlertTriangle, GripHorizontal, Clock, Users } from 'lucide-react';
 import { StaffAllocationLayer } from './timeline/StaffAllocationLayer';
 import { WeeklyCapacityHeader } from './timeline/WeeklyCapacityHeader';
@@ -444,7 +444,7 @@ export function Timeline() {
                           popover. pointerdown still bubbles to the parent drag
                           handler, so the bar remains fully draggable. */}
                       {(() => {
-                        const assigned = staff.filter(s => job.assignedStaffIds.includes(s.id));
+                        const assigned = staff.filter(s => getAllJobStaffIds(job).includes(s.id));
                         const visible = assigned.slice(0, 3);
                         const extra = assigned.length - visible.length;
                         if (assigned.length === 0) return null;

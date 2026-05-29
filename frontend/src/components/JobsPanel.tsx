@@ -2,14 +2,14 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Search, AlertTriangle, Trash2,
-  Zap, Clock, CheckCircle2, Inbox,
+  Zap, CheckCircle2, Inbox,
   ChevronRight, SlidersHorizontal, X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useJobModal } from '../context/JobModalContext';
 import { Job, JobStatus, JobPriority } from '../types';
 import { fromDateString } from '../utils/dateUtils';
-import { isJobAtRisk } from '../utils/schedulingEngine';
+import { isJobAtRisk, getAllJobStaffIds } from '../utils/schedulingEngine';
 import { differenceInCalendarDays, isBefore, startOfDay } from 'date-fns';
 import { JobForm } from './forms/JobForm';
 
@@ -413,7 +413,7 @@ export function JobsPanel() {
                       const scheduledHours = getScheduledHours(job.id);
                       const pct = Math.min(100, Math.round((scheduledHours / Math.max(job.estimatedHours, 1)) * 100));
                       const isComplete = pct >= 100;
-                      const assignedStaff = staff.filter(s => job.assignedStaffIds.includes(s.id));
+                      const assignedStaff = staff.filter(s => getAllJobStaffIds(job).includes(s.id));
 
                       return (
                         <motion.div
