@@ -64,12 +64,19 @@ function buildBlockedMap(staffEvents: StaffEvent[]): BlockedMap {
 
 /**
  * Get the staff assigned to a job on a specific date.
- * Uses dailyStaffOverrides if present for that date, otherwise falls back to assignedStaffIds.
+ * - If there's an explicit per-day override, use it.
+ * - Saturdays + Sundays are *optional* working days: they default to NO staff
+ *   so the auto-scheduler skips them unless someone is explicitly assigned
+ *   for that specific Sat/Sun via the Daily Staff tab.
+ * - Mon–Fri without an override fall back to the job's default
+ *   assignedStaffIds.
  */
 export function getStaffForJobOnDate(job: Job, dateStr: string): string[] {
   if (job.dailyStaffOverrides && job.dailyStaffOverrides[dateStr]) {
     return job.dailyStaffOverrides[dateStr];
   }
+  const dow = fromDateString(dateStr).getDay();
+  if (dow === 0 || dow === 6) return [];
   return job.assignedStaffIds;
 }
 

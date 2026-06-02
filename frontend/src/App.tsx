@@ -11,6 +11,7 @@ import { WeeklyPlanner } from './components/WeeklyPlanner';
 import { JobsPanel } from './components/JobsPanel';
 import { StaffPanel } from './components/StaffPanel';
 import { Timeline } from './components/Timeline';
+import { StaffCapacityPanel } from './components/StaffCapacityPanel';
 import { CapacityChart, StaffUtilisationChart } from './components/Charts';
 import { UpcomingDeadlines } from './components/UpcomingDeadlines';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -169,6 +170,7 @@ function AppShell() {
             {activeTab === 'timeline' && (
               <div className="space-y-5">
                 <Timeline />
+                <StaffCapacityPanel />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <CapacityChart />
                   <StaffUtilisationChart />

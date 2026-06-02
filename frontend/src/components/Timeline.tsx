@@ -1,18 +1,19 @@
 // @ts-nocheck
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { addDays, format, differenceInCalendarDays, isBefore, isAfter } from 'date-fns';
 import { useApp } from '../context/AppContext';
 import { useJobModal } from '../context/JobModalContext';
 import { toDateString, isToday, formatDay } from '../utils/dateUtils';
 import { isJobAtRisk, getRemainingHours, getAllJobStaffIds } from '../utils/schedulingEngine';
-import { AlertTriangle, GripHorizontal, Clock, Users } from 'lucide-react';
-import { StaffAllocationLayer } from './timeline/StaffAllocationLayer';
+import { AlertTriangle, GripHorizontal, Clock, Users, CalendarDays, RefreshCw, RotateCcw } from 'lucide-react';
 import { WeeklyCapacityHeader } from './timeline/WeeklyCapacityHeader';
 import { StaffHoverCard } from './StaffHoverCard';
 import { StaffListHoverCard } from './StaffListHoverCard';
 import { toast } from 'sonner';
 
-const DAYS_TO_SHOW = 49; // 7 weeks
+const DAYS_TO_SHOW = 49; // default minimum window (7 weeks: today−7 → today+41)
+const LABEL_W = 240;     // px — must match the w-60 sticky "Job / Client" label column
+const DAY_PX = 32;       // px — fixed day-column width; gives the grid its horizontal scroll
 
 /**
  * Build a stable map of staffId → 1-or-2-letter initials, matching the
@@ -39,18 +40,42 @@ function computeInitials(staffList) {
 }
 
 export function Timeline() {
-  const { state, updateJob } = useApp();
+  const { state, updateJob, loadAll } = useApp();
   const { openJob } = useJobModal();
   const { jobs, staff, scheduleEntries, staffEvents, settings } = state;
   const capacityTargets = settings.capacityTargets ?? { weeklyBaseline: 240, weeklyStretch: 350 };
 
   const today = useMemo(() => new Date(), []);
-  const days = useMemo(
-    () => Array.from({ length: DAYS_TO_SHOW }, (_, i) => addDays(today, i - 7)),
-    []
-  );
+
+  // Dynamic window: at minimum the default 7-week span (today−7 → today+41), but
+  // expanded to include the earliest start / latest deadline of any active job so
+  // off-window jobs are reachable by horizontal-scrolling instead of clamping to
+  // an un-draggable edge sliver. Bounded to ±~6.5 months so one stray date can't
+  // explode the grid into thousands of cells.
+  const { windowStart, windowEnd } = useMemo(() => {
+    let start = addDays(today, -7);
+    let end = addDays(today, DAYS_TO_SHOW - 8); // today+41 when DAYS_TO_SHOW=49
+    const floor = addDays(today, -200);
+    const ceil = addDays(today, 200);
+    for (const j of jobs) {
+      if (j.status === 'completed') continue;
+      const s = fromDate(j.startDate);
+      const e = fromDate(j.deadline);
+      if (isBefore(s, start)) start = s;
+      if (isAfter(e, end)) end = e;
+    }
+    if (isBefore(start, floor)) start = floor;
+    if (isAfter(end, ceil)) end = ceil;
+    return { windowStart: start, windowEnd: end };
+  }, [jobs, today]);
+
+  const days = useMemo(() => {
+    const n = differenceInCalendarDays(windowEnd, windowStart) + 1;
+    return Array.from({ length: Math.max(n, 1) }, (_, i) => addDays(windowStart, i));
+  }, [windowStart, windowEnd]);
 
   const trackRef = useRef(null);
+  const scrollRef = useRef(null);
   const dragRef = useRef(null);
   const [draggingJobId, setDraggingJobId] = useState(null);
   const [liveOffsets, setLiveOffsets] = useState({});
@@ -126,6 +151,11 @@ export function Timeline() {
     if (!dragRef.current) return;
     const delta = getDelta(e.clientX);
     const d = dragRef.current;
+    // Only re-render when the day-rounded delta actually changes (i.e. we cross a
+    // day boundary), not on every sub-pixel pointermove. Keeps drag smooth even
+    // when the dynamic window spans many months / hundreds of day cells.
+    if (d.lastDelta === delta) return;
+    d.lastDelta = delta;
     setLiveOffsets(p => ({
       ...p,
       [d.jobId]: {
@@ -231,6 +261,63 @@ export function Timeline() {
   }, [jobs, staffFilter]);
   const todayPct = dateToPct(today);
 
+  // Scroll the grid so today sits roughly centred. Runs on mount and whenever the
+  // window grows (jobs added/moved). LABEL_W offsets past the sticky label column.
+  function centreToday(behavior = 'auto') {
+    const el = scrollRef.current;
+    if (!el) return;
+    const idx = differenceInCalendarDays(today, startDate);
+    el.scrollTo({ left: Math.max(0, LABEL_W + idx * DAY_PX - el.clientWidth / 2), behavior });
+  }
+  useEffect(() => { centreToday('auto'); }, [windowStart, windowEnd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── Sync + Reset ───
+  const [syncing, setSyncing] = useState(false);
+  // Snapshot of saved job dates, taken on first load + after each Sync, so Reset
+  // can undo a run of mis-drags in one click by restoring jobs to that snapshot.
+  const baselineRef = useRef(null);
+  useEffect(() => {
+    if (baselineRef.current == null && jobs.length) {
+      baselineRef.current = Object.fromEntries(
+        jobs.map(j => [j.id, { startDate: j.startDate, deadline: j.deadline }]),
+      );
+    }
+  }, [jobs]);
+
+  // Sync: force a reload of jobs/staff/etc. from the database (the source of
+  // truth), then re-snapshot the baseline from the fresh data.
+  async function handleSync() {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await loadAll({ silent: true });
+      baselineRef.current = null; // re-snapshot from the freshly-synced jobs
+      toast.success('Timeline synced', { id: 'tl-sync', description: 'Reloaded jobs from the database.' });
+    } catch (err) {
+      toast.error('Sync failed', { id: 'tl-sync', description: String(err?.message ?? err) });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  // Reset: a drag safety-net. Restore every active job to its baseline dates
+  // (where it sat on load / last Sync), undoing accidental drags in one click.
+  function handleReset() {
+    const base = baselineRef.current;
+    if (!base) return;
+    let n = 0;
+    for (const job of jobs) {
+      if (job.status === 'completed') continue;
+      const b = base[job.id];
+      if (b && (b.startDate !== job.startDate || b.deadline !== job.deadline)) {
+        updateJob({ ...job, startDate: b.startDate, deadline: b.deadline });
+        n++;
+      }
+    }
+    setLiveOffsets({});
+    toast(n ? `Reset ${n} job${n > 1 ? 's' : ''} to last-synced dates` : 'Nothing to reset', { id: 'tl-reset' });
+  }
+
   // ─── Per-job hours summary ───
   function getJobHours(jobId) {
     const scheduled = scheduleEntries.filter(e => e.jobId === jobId).reduce((s,e) => s+e.hours, 0);
@@ -249,10 +336,37 @@ export function Timeline() {
           <h2 className="font-semibold text-slate-800 text-sm">Job Timeline</h2>
           <p className="text-xs text-slate-500">Drag bars to move • drag edges to resize dates • click to view job</p>
         </div>
-        <div className="flex items-center gap-3 text-[10px] text-slate-400">
-          <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-amber-400 inline-block" /> Today</span>
-          <span className="flex items-center gap-1"><AlertTriangle size={10} className="text-orange-400" /> At risk</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-indigo-200 inline-block" /> Trade school</span>
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-3 text-[10px] text-slate-400">
+            <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-amber-400 inline-block" /> Today</span>
+            <span className="flex items-center gap-1"><AlertTriangle size={10} className="text-orange-400" /> At risk</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-indigo-200 inline-block" /> Trade school</span>
+          </div>
+          {/* ── Timeline controls ── */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => centreToday('smooth')}
+              className="flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-white border border-slate-200 rounded-md px-2 py-1 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              title="Scroll to today"
+            >
+              <CalendarDays size={12} /> Today
+            </button>
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-white border border-slate-200 rounded-md px-2 py-1 hover:bg-slate-50 hover:border-slate-300 transition-colors disabled:opacity-60 disabled:cursor-default"
+              title="Reload jobs from the database"
+            >
+              <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Syncing…' : 'Sync'}
+            </button>
+            <button
+              onClick={handleReset}
+              className="flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-white border border-slate-200 rounded-md px-2 py-1 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              title="Undo drag changes — restore jobs to their last-synced dates"
+            >
+              <RotateCcw size={12} /> Reset
+            </button>
+          </div>
         </div>
       </div>
 
@@ -301,8 +415,16 @@ export function Timeline() {
         </div>
       )}
 
-      <div className="overflow-x-auto">
-        <div className="min-w-[960px]">
+      {/* Grow to fit the job list, but cap at ~72vh with both-axis scroll so a
+          long list can't take over the whole page (it only scrolls once it
+          exceeds the cap). The header group below stays pinned while scrolling. */}
+      <div className="overflow-auto max-h-[72vh]" ref={scrollRef}>
+        <div style={{ minWidth: LABEL_W + totalDays * DAY_PX }}>
+
+          {/* Sticky header group — capacity + week + day headers stay pinned at the
+              top while job rows scroll within the capped height. z-50 keeps it above
+              the z-40 sticky labels of the scrolling rows. */}
+          <div className="sticky top-0 z-50 bg-white shadow-[0_2px_5px_-3px_rgba(15,23,42,0.18)]">
 
           {/* ── Weekly capacity header (Layer C) ── */}
           <WeeklyCapacityHeader
@@ -361,6 +483,8 @@ export function Timeline() {
             </div>
           </div>
 
+          </div>{/* end sticky header group */}
+
           {/* ── Job rows ── */}
           {activeJobs.map(job => {
             const atRisk = isJobAtRisk(job, scheduleEntries, staff);
@@ -388,7 +512,9 @@ export function Timeline() {
                 style={{ minHeight: 56 }}
               >
                 {/* ─ Job label ─ */}
-                <div className="w-60 flex-shrink-0 border-r border-slate-100 px-3 py-2 cursor-pointer hover:bg-amber-50/40 transition-colors sticky left-0 bg-white group-hover:bg-amber-50/40 z-10"
+                {/* z-40 + opaque bg so job bars scroll/clamp UNDER this sticky
+                    label column instead of overlapping the Job/Client text. */}
+                <div className="w-60 flex-shrink-0 border-r border-slate-200 px-3 py-2 cursor-pointer hover:bg-amber-50 transition-colors sticky left-0 bg-white group-hover:bg-amber-50 z-40"
                   onClick={() => openJob(job.id)}>
                   <div className="flex items-start gap-2">
                     <div className="w-2 h-2 rounded-full mt-1 flex-shrink-0" style={{ backgroundColor: job.colour }} />
@@ -452,6 +578,10 @@ export function Timeline() {
                     aria-label={`${job.jobName}: ${formatDay(fromDate(job.startDate))} to ${formatDay(fromDate(job.deadline))}`}
                     aria-roledescription="Schedule bar. Arrow keys move, Shift moves a week, Alt+arrows resize the deadline, Enter opens."
                     onKeyDown={e => handleKeyDown(e, job)}
+                    onPointerDown={e => startDrag(e, job, 'move')}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onDoubleClick={() => openJob(job.id)}
                     className={`absolute top-1/2 -translate-y-1/2 h-9 rounded-lg flex items-center overflow-visible z-20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1 ${isDraggingThis ? 'scale-[1.015]' : ''}`}
                     style={{
                       ...style,
@@ -460,7 +590,10 @@ export function Timeline() {
                       boxShadow: isDraggingThis
                         ? `0 8px 28px ${job.colour}66, 0 2px 8px rgba(0,0,0,.12)`
                         : `0 1px 4px ${job.colour}33`,
-                      cursor: isDraggingThis ? 'grabbing' : 'default',
+                      cursor: isDraggingThis ? 'grabbing' : 'grab',
+                      // Floor the bar width so collapsed / short / off-window jobs
+                      // keep a grabbable body between the thin resize edges below.
+                      minWidth: '44px',
                       zIndex: isDraggingThis ? 30 : 5,
                       transition: isDraggingThis ? 'none' : 'box-shadow .2s, left .25s ease, width .25s ease, transform .15s ease',
                     }}
@@ -469,8 +602,8 @@ export function Timeline() {
                     <div className="absolute left-0 top-0 bottom-0 rounded-l-lg opacity-40"
                       style={{ width:`${prog}%`, backgroundColor: job.colour }} />
 
-                    {/* Left resize handle */}
-                    <div className="absolute left-0 top-0 bottom-0 w-4 cursor-w-resize z-30 flex items-center justify-center rounded-l-lg hover:bg-white/50 transition-colors group/lh"
+                    {/* Left resize handle — thin edge; the rest of the bar moves */}
+                    <div className="absolute left-0 top-0 bottom-0 w-2 cursor-w-resize z-30 flex items-center justify-center rounded-l-lg hover:bg-white/50 transition-colors group/lh"
                       onPointerDown={e => startDrag(e, job, 'resize-left')}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
@@ -482,13 +615,9 @@ export function Timeline() {
                       </div>
                     </div>
 
-                    {/* Centre drag + click */}
-                    <div className="flex-1 flex items-center gap-1 cursor-grab active:cursor-grabbing px-3 min-w-0 z-20"
-                      onPointerDown={e => startDrag(e, job, 'move')}
-                      onPointerMove={handlePointerMove}
-                      onPointerUp={handlePointerUp}
-                      onDoubleClick={() => openJob(job.id)}
-                    >
+                    {/* Centre content — pointer-downs here bubble up to the bar's
+                        whole-bar move handler; only the thin edges resize. */}
+                    <div className="flex-1 flex items-center gap-1 px-3 min-w-0 z-20">
                       <GripHorizontal size={9} style={{ color: job.colour, opacity: 0.6, flexShrink: 0 }} />
                       <span className="flex-1 text-[9px] font-bold truncate" style={{ color: job.colour }}>
                         {job.jobName}
@@ -532,8 +661,8 @@ export function Timeline() {
                       })()}
                     </div>
 
-                    {/* Right resize handle */}
-                    <div className="absolute right-0 top-0 bottom-0 w-4 cursor-e-resize z-30 flex items-center justify-center rounded-r-lg hover:bg-white/50 transition-colors group/rh"
+                    {/* Right resize handle — thin edge; the rest of the bar moves */}
+                    <div className="absolute right-0 top-0 bottom-0 w-2 cursor-e-resize z-30 flex items-center justify-center rounded-r-lg hover:bg-white/50 transition-colors group/rh"
                       onPointerDown={e => startDrag(e, job, 'resize-right')}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
@@ -571,15 +700,6 @@ export function Timeline() {
             </div>
           )}
 
-          {/* ── Per-staff allocation strip (Layer B) ── */}
-          <StaffAllocationLayer
-            days={days}
-            totalDays={totalDays}
-            scheduleEntries={scheduleEntries}
-            jobs={jobs}
-            staff={staff}
-            staffEvents={staffEvents}
-          />
         </div>
       </div>
     </div>

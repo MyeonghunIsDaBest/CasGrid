@@ -28,8 +28,19 @@ export function DailyStaffAssignment({ job, onClose }) {
   const dirtyRef = useRef(false);
   useEffect(() => () => { if (dirtyRef.current) runAutoScheduleRef.current(); }, []);
 
+  // Saturdays + Sundays are optional working days: they default to NO staff,
+  // so the toggle table for those rows starts entirely unchecked. The user can
+  // tick staff in to opt into weekend work; un-ticking everyone returns the
+  // row to its empty default (no "overridden" amber tint).
+  function isOptionalDay(dateStr) {
+    const dow = fromDateString(dateStr).getDay();
+    return dow === 0 || dow === 6;
+  }
+
   function getStaffForDay(dateStr) {
-    return job.dailyStaffOverrides?.[dateStr] ?? job.assignedStaffIds;
+    if (job.dailyStaffOverrides?.[dateStr]) return job.dailyStaffOverrides[dateStr];
+    if (isOptionalDay(dateStr)) return [];
+    return job.assignedStaffIds;
   }
 
   function toggleStaffOnDay(dateStr, staffId) {
@@ -37,9 +48,14 @@ export function DailyStaffAssignment({ job, onClose }) {
     const next = current.includes(staffId)
       ? current.filter(id => id !== staffId)
       : [...current, staffId];
-    // If next equals job.assignedStaffIds exactly, drop the override.
-    const isDefault = next.length === job.assignedStaffIds.length &&
-      next.every(id => job.assignedStaffIds.includes(id));
+    // Drop the override when `next` matches the row's natural default —
+    // empty for Sat/Sun, the job's assigned staff for weekdays. Keeps the
+    // 'overridden' indicator honest.
+    const optional = isOptionalDay(dateStr);
+    const isDefault = optional
+      ? next.length === 0
+      : (next.length === job.assignedStaffIds.length &&
+         next.every(id => job.assignedStaffIds.includes(id)));
     const updated = { ...job.dailyStaffOverrides };
     if (isDefault) delete updated[dateStr];
     else updated[dateStr] = next;
@@ -82,7 +98,8 @@ export function DailyStaffAssignment({ job, onClose }) {
       <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-100">
         <Info size={14} className="text-amber-500 mt-0.5 flex-shrink-0" />
         <p className="text-xs text-amber-700">
-          Toggle which staff work on each day. Days without an override use the job's default assigned staff.
+          Toggle which staff work on each day. Weekdays default to the job's assigned staff;
+          Saturday + Sunday rows start empty (optional) — tick staff in if you want them on the weekend.
           Trade school days are highlighted — staff are automatically excluded.
         </p>
       </div>
@@ -115,18 +132,21 @@ export function DailyStaffAssignment({ job, onClose }) {
               const dateStr = toDateString(day);
               const dayStaff = getStaffForDay(dateStr);
               const hasOverride = job.dailyStaffOverrides?.[dateStr] !== undefined;
+              const optional = isOptionalDay(dateStr);
               const dayName = format(day, 'EEE d MMM');
 
               return (
                 <tr key={dateStr}
-                  className={`border-b border-slate-50 ${hasOverride ? 'bg-amber-50/30' : ''}`}>
+                  className={`border-b border-slate-50 ${hasOverride ? 'bg-amber-50/30' : optional ? 'bg-slate-50/40' : ''}`}>
                   <td className="py-2 pr-3 sticky left-0 bg-inherit">
-                    <div className={`font-semibold ${hasOverride ? 'text-amber-700' : 'text-slate-700'}`}>
+                    <div className={`font-semibold ${hasOverride ? 'text-amber-700' : optional ? 'text-slate-500' : 'text-slate-700'}`}>
                       {dayName}
                     </div>
-                    {hasOverride && (
+                    {hasOverride ? (
                       <div className="text-[8px] text-amber-500 font-medium">overridden</div>
-                    )}
+                    ) : optional ? (
+                      <div className="text-[8px] text-slate-400 font-medium">optional</div>
+                    ) : null}
                   </td>
                   {eligibleStaff.map(s => {
                     const ev = getEventForDay(s.id, dateStr);

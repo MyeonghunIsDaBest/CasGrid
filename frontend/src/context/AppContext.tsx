@@ -211,6 +211,7 @@ interface AppContextType {
   updateSimproConfig:   (c: Partial<SimproConfig>)    => void;
   exportData:           ()                            => void;
   importData:           (json: string)                => void;
+  loadAll:              (opts?: { silent?: boolean }) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -694,7 +695,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateScheduleEntry, deleteScheduleEntry,
     addStaffEvent, updateStaffEvent, deleteStaffEvent,
     runAutoSchedule, updateSettings, updateSimproConfig,
-    exportData, importData,
+    exportData, importData, loadAll,
   }), [state, syncStatus]);
 
   // ── Render ────────────────────────────────────────────────────────────────
