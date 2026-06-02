@@ -332,25 +332,27 @@ export function Timeline() {
           </div>
 
           {/* ── Day header with DAY NAME ── */}
-          <div className="flex border-b border-slate-200" ref={trackRef}>
+          <div className="flex border-b border-slate-200">
             <div className="w-60 flex-shrink-0 border-r border-slate-100 bg-slate-50 sticky left-0 z-10" />
-            <div className="flex-1 flex">
+            {/* trackRef on the day-cells container (NOT the whole row) so its
+                measured width excludes the 240px label column — that's the exact
+                basis the bars are positioned against, so a drag's px→day stays
+                accurate and the bar lands where dropped instead of snapping back. */}
+            <div className="flex-1 flex" ref={trackRef}>
               {days.map((day, i) => {
-                const isWknd = day.getDay() === 0;
                 const isT = isToday(day);
                 const isMon = day.getDay() === 1;
                 return (
                   <div key={i}
-                    className={`border-r text-center transition-colors flex flex-col items-center justify-center py-1
-                      ${isWknd ? 'bg-slate-50 border-slate-100' : 'border-slate-100'}
+                    className={`border-r text-center transition-colors flex flex-col items-center justify-center py-1 border-slate-100
                       ${isT ? 'bg-amber-50 border-amber-200' : ''}`}
                     style={{ width: `${100/totalDays}%` }}
                   >
                     {/* Day letter — always show Mon, show others if wide enough */}
-                    <div className={`text-[8px] font-bold leading-none ${isT ? 'text-amber-500' : isWknd ? 'text-slate-300' : 'text-slate-400'}`}>
+                    <div className={`text-[8px] font-bold leading-none ${isT ? 'text-amber-500' : 'text-slate-400'}`}>
                       {format(day, 'EEE').toUpperCase().slice(0,1)}
                     </div>
-                    <div className={`text-[9px] font-semibold leading-none mt-0.5 ${isT ? 'text-amber-600' : isWknd ? 'text-slate-300' : isMon ? 'text-slate-700' : 'text-slate-400'}`}>
+                    <div className={`text-[9px] font-semibold leading-none mt-0.5 ${isT ? 'text-amber-600' : isMon ? 'text-slate-700' : 'text-slate-400'}`}>
                       {format(day,'d')}
                     </div>
                   </div>
@@ -417,15 +419,7 @@ export function Timeline() {
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
                 >
-                  {/* Weekend shading — Sunday only; Saturday is a working day */}
-                  {days.map((day, i) => {
-                    const isWknd = day.getDay() === 0;
-                    if (!isWknd) return null;
-                    return (
-                      <div key={i} className="absolute top-0 bottom-0 bg-slate-50 pointer-events-none"
-                        style={{ left:`${(i/totalDays)*100}%`, width:`${(1/totalDays)*100}%` }} />
-                    );
-                  })}
+                  {/* No weekend shading — every day Mon–Sun is a working day */}
 
                   {/* Trade school indicators for assigned apprentices */}
                   {days.map((day, i) => {

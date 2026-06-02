@@ -432,8 +432,22 @@ export function JobsPanel() {
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, scale: 0.97 }}
                           transition={{ delay: idx * 0.025, duration: 0.22 }}
+                          draggable
+                          // Framer Motion's onDragStart prop is typed for its
+                          // own pan handler; cast lets us attach the native
+                          // HTML5 DragEvent handler instead.
+                          {...({
+                            onDragStart: (e: React.DragEvent<HTMLDivElement>) => {
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData(
+                                'application/x-casgrid-job',
+                                JSON.stringify({ jobId: job.id }),
+                              );
+                            },
+                          } as any)}
                           onClick={() => openJob(job.id)}
-                          className="group relative flex flex-col cursor-pointer bg-white rounded-xl
+                          title="Click to view · drag to move"
+                          className="group relative flex flex-col cursor-grab active:cursor-grabbing bg-white rounded-xl
                             ring-1 ring-slate-200/70 shadow-sm overflow-hidden
                             hover:ring-slate-300 hover:shadow-md hover:-translate-y-0.5
                             transition-all duration-200"

@@ -14,7 +14,7 @@ import * as db from '../lib/db';
 
 const defaultSettings: AppSettings = {
   overrideOverbooking:   false,
-  workingDaysPerWeek:    [1, 2, 3, 4, 5, 6],
+  workingDaysPerWeek:    [0, 1, 2, 3, 4, 5, 6],
   currentWeekOffset:     0,
   capacityTargets:       { weeklyBaseline: 240, weeklyStretch: 350 },
 };
@@ -283,7 +283,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           jobs,
           scheduleEntries: entries,
           staffEvents:     events,
-          settings:        settings ?? { overrideOverbooking: false, workingDaysPerWeek: [1,2,3,4,5,6], capacityTargets: { weeklyBaseline: 240, weeklyStretch: 350 } },
+          settings:        settings ?? { overrideOverbooking: false, workingDaysPerWeek: [0,1,2,3,4,5,6], capacityTargets: { weeklyBaseline: 240, weeklyStretch: 350 } },
           simproConfig:    simpro   ?? defaultSimproConfig,
         },
       });

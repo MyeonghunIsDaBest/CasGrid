@@ -89,22 +89,13 @@ export function StaffAllocationLayer({ days, totalDays, scheduleEntries, jobs, s
             <div className="flex-1 relative flex">
               {days.map((day, i) => {
                 const dStr = toDateString(day);
-                const isWknd = day.getDay() === 0;
                 const isT = isToday(day);
                 const used = dailyLoads[dStr]?.[member.id] ?? 0;
                 const avail = getEffectiveAvailable(member, dStr, staffEvents);
                 const ratio = avail > 0 ? used / avail : 0;
                 const widthPct = 100 / totalDays;
 
-                if (isWknd) {
-                  return (
-                    <div
-                      key={i}
-                      className="border-r border-slate-100 bg-slate-50"
-                      style={{ width: `${widthPct}%` }}
-                    />
-                  );
-                }
+                // Sunday is a working day now — no weekend-shaded cell branch.
 
                 // Empty (no schedule, has capacity) → dashed cell signalling spare slot
                 if (used <= 0.01) {

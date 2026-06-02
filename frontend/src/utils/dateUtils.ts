@@ -4,10 +4,10 @@ import {
   startOfDay, differenceInCalendarDays, isEqual
 } from 'date-fns';
 
-/** Returns working days (Mon-Sat) in a given date range, inclusive — Sunday is the only non-working day */
+/** Returns working days (Mon-Sun) in a given date range, inclusive — every day is a working day */
 export function getWorkingDays(start: Date, end: Date): Date[] {
   if (isBefore(end, start)) return [];
-  return eachDayOfInterval({ start, end }).filter(d => d.getDay() !== 0);
+  return eachDayOfInterval({ start, end });
 }
 
 /** Returns working days for a given week offset from today */

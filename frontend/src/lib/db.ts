@@ -71,6 +71,40 @@ export async function deleteStaff(id: string): Promise<void> {
 
 // ─── JOBS ────────────────────────────────────────────────────────────────────
 
+const JOB_STATUSES = ['unscheduled','scheduled','inProgress','completed','onHold'] as const;
+const JOB_PRIORITIES = ['low','medium','high','urgent'] as const;
+
+/**
+ * Coerce a job `status` to one of the values allowed by the DB CHECK
+ * constraint. Rows imported into Postgres outside the app (e.g. Simpro statuses
+ * like "Programmed") read fine but make every UPDATE fail the CHECK, which is
+ * why a drag-to-reschedule couldn't save. Mapping here (on both read and write)
+ * keeps in-memory state valid and lets a save heal the stored row. Unknown
+ * values fall back to 'scheduled' — these jobs carry dates and live on the
+ * timeline, so "scheduled" is the safe neutral.
+ */
+export function normaliseStatus(raw: unknown): Job['status'] {
+  if ((JOB_STATUSES as readonly string[]).includes(raw as string)) return raw as Job['status'];
+  switch (String(raw ?? '').trim().toLowerCase()) {
+    case 'programmed': case 'booked':                                  return 'scheduled';
+    case 'pending': case 'quote': case 'new': case '':                 return 'unscheduled';
+    case 'progress': case 'in progress': case 'active': case 'started':return 'inProgress';
+    case 'complete': case 'completed': case 'done': case 'closed': case 'archived': return 'completed';
+    case 'hold': case 'on hold': case 'paused':                        return 'onHold';
+    default:                                                           return 'scheduled';
+  }
+}
+
+/** Coerce a job `priority` to a value allowed by the DB CHECK constraint. */
+export function normalisePriority(raw: unknown): Job['priority'] {
+  if ((JOB_PRIORITIES as readonly string[]).includes(raw as string)) return raw as Job['priority'];
+  switch (String(raw ?? '').trim().toLowerCase()) {
+    case 'critical':                  return 'urgent';
+    case 'normal': case 'standard':   return 'medium';
+    default:                          return 'medium';
+  }
+}
+
 function fromDbJob(r: Record<string, unknown>): Job {
   return {
     id:                   r.id                      as string,
@@ -81,12 +115,12 @@ function fromDbJob(r: Record<string, unknown>): Job {
     simproJobId:          (r.simpro_job_id          as string) ?? '',
     estimatedHours:       Number(r.estimated_hours) || 0,
     remainingHours:       Number(r.remaining_hours) || 0,
-    priority:             r.priority                as Job['priority'],
+    priority:             normalisePriority(r.priority),
     startDate:            r.start_date              as string,
     deadline:             r.deadline                as string,
     assignedStaffIds:     (r.assigned_staff_ids     as string[]) ?? [],
     dailyStaffOverrides:  (r.daily_staff_overrides  as Record<string, string[]>) ?? {},
-    status:               r.status                  as Job['status'],
+    status:               normaliseStatus(r.status),
     notes:                (r.notes                  as string) ?? '',
     colour:               r.colour                  as string,
     runningStartedAt:     (r.running_started_at     as string | null) ?? null,
@@ -104,12 +138,12 @@ function toDbJob(j: Job) {
     simpro_job_id:         j.simproJobId,
     estimated_hours:       j.estimatedHours,
     remaining_hours:       j.remainingHours,
-    priority:              j.priority,
+    priority:              normalisePriority(j.priority),
     start_date:            j.startDate,
     deadline:              j.deadline,
     assigned_staff_ids:    j.assignedStaffIds,
     daily_staff_overrides: j.dailyStaffOverrides,
-    status:                j.status,
+    status:                normaliseStatus(j.status),
     notes:                 j.notes,
     colour:                j.colour,
     running_started_at:    j.runningStartedAt,
