@@ -259,7 +259,7 @@ export function CapacityChart() {
 
       {/* Sub-header band — project filter */}
       <div className="px-10 py-6 border-b border-slate-100 flex items-center gap-2">
-        <span className="text-[12px] text-slate-400 font-semibold uppercase tracking-wide flex-shrink-1">Project</span>
+        <span className="text-[12px] text-slate-400 font-semibold uppercase tracking-wide flex-shrink-0">Project</span>
         <select
           value={projectFilter}
           onChange={e => setProjectFilter(e.target.value)}

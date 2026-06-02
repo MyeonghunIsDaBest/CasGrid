@@ -1,13 +1,13 @@
 import {
-  addDays, format, isWeekend, startOfWeek, endOfWeek,
-  isBefore, isAfter, parseISO, eachDayOfInterval, getDay,
+  addDays, format, startOfWeek, endOfWeek,
+  isBefore, isAfter, parseISO, eachDayOfInterval,
   startOfDay, differenceInCalendarDays, isEqual
 } from 'date-fns';
 
-/** Returns working days (Mon-Fri) in a given date range, inclusive */
+/** Returns working days (Mon-Sat) in a given date range, inclusive — Sunday is the only non-working day */
 export function getWorkingDays(start: Date, end: Date): Date[] {
   if (isBefore(end, start)) return [];
-  return eachDayOfInterval({ start, end }).filter(d => !isWeekend(d));
+  return eachDayOfInterval({ start, end }).filter(d => d.getDay() !== 0);
 }
 
 /** Returns working days for a given week offset from today */

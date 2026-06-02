@@ -89,7 +89,7 @@ export function StaffAllocationLayer({ days, totalDays, scheduleEntries, jobs, s
             <div className="flex-1 relative flex">
               {days.map((day, i) => {
                 const dStr = toDateString(day);
-                const isWknd = day.getDay() === 0 || day.getDay() === 6;
+                const isWknd = day.getDay() === 0;
                 const isT = isToday(day);
                 const used = dailyLoads[dStr]?.[member.id] ?? 0;
                 const avail = getEffectiveAvailable(member, dStr, staffEvents);

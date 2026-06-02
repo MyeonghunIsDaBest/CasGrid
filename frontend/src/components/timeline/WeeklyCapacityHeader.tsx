@@ -29,12 +29,12 @@ export function WeeklyCapacityHeader({
   const baseline = Math.max(0, capacityTargets?.weeklyBaseline ?? 240);
   const stretch  = Math.max(baseline, capacityTargets?.weeklyStretch  ?? 350);
 
-  // Theoretical max weekly team-hours (active billable staff × Mon–Fri),
+  // Theoretical max weekly team-hours (active billable staff × Mon–Sat),
   // used to scale the targets slider. 0 → control falls back to a sensible max.
   const teamWeeklyHours = useMemo(
     () => staff
       .filter(s => s.active && s.isBillable)
-      .reduce((sum, s) => sum + (s.dailyAvailableHours || 0), 0) * 5,
+      .reduce((sum, s) => sum + (s.dailyAvailableHours || 0), 0) * 6,
     [staff],
   );
 

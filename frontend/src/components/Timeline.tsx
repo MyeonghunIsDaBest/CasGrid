@@ -336,7 +336,7 @@ export function Timeline() {
             <div className="w-60 flex-shrink-0 border-r border-slate-100 bg-slate-50 sticky left-0 z-10" />
             <div className="flex-1 flex">
               {days.map((day, i) => {
-                const isWknd = day.getDay() === 0 || day.getDay() === 6;
+                const isWknd = day.getDay() === 0;
                 const isT = isToday(day);
                 const isMon = day.getDay() === 1;
                 return (
@@ -417,9 +417,9 @@ export function Timeline() {
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
                 >
-                  {/* Weekend shading */}
+                  {/* Weekend shading — Sunday only; Saturday is a working day */}
                   {days.map((day, i) => {
-                    const isWknd = day.getDay() === 0 || day.getDay() === 6;
+                    const isWknd = day.getDay() === 0;
                     if (!isWknd) return null;
                     return (
                       <div key={i} className="absolute top-0 bottom-0 bg-slate-50 pointer-events-none"

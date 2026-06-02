@@ -112,7 +112,7 @@ export function SettingsPanel({ onOpenSimpro }: SettingsPanelProps) {
           </div>
 
           <p className="text-xs text-slate-500">
-            <strong>Working days:</strong> Monday to Friday (fixed). A future version will support custom working days and public-holiday exclusions.
+            <strong>Working days:</strong> Monday to Saturday (fixed). A future version will support custom working days and public-holiday exclusions.
           </p>
         </div>
       </motion.div>
