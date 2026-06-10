@@ -48,15 +48,22 @@ security — anyone with the URL can still read/write all data via the API. The 
 2. PostgREST smoke test with the anon key: `GET /rest/v1/staff` succeeds; no-op
    `PATCH app_settings` succeeds (write path).
 3. Code check: with RLS enabled, realtime DELETE events carry only the primary key in
-   `payload.old` — confirm `AppContext.tsx` DELETE handlers use only `payload.old.id`.
+   `payload.old`. **Finding (2026-06-10): the `schedule_entries` DELETE handler
+   (`AppContext.tsx:389`) reads `old.date`/`old.is_manual_override` to ignore stale
+   delete echoes for past auto-entries — so it gets a small patch**: the guard moves to
+   a pure helper (`frontend/src/lib/realtimeGuards.ts`, unit-tested) that falls back to
+   the local copy of the row when the payload is PK-only. All other DELETE handlers use
+   only `payload.old.id`.
 4. Run the app locally against the live DB: data loads, realtime sync works.
 5. Jordan hits Refresh in Security Advisor → 0 errors.
 
 ## Behaviour change
 
 None intended — the policies grant exactly the access the existing grants already gave.
-Known exception: realtime DELETE `old` records shrink to PK-only (step 3 confirms the app
-only needs `id`).
+Known exception: realtime DELETE `old` records shrink to PK-only; the `schedule_entries`
+handler patch (Verification step 3) preserves its stale-echo guard, so net behaviour is
+unchanged. "Zero app changes" from the Decision section is amended to this one
+behaviour-preserving patch.
 
 ## Out of scope / follow-up
 
