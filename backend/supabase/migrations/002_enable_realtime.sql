@@ -16,6 +16,9 @@
 --
 -- HOW TO RUN:
 --   Supabase dashboard → SQL Editor → New query → paste this → Run.
+--
+-- ⚠️ Step 2 DISABLES RLS, which re-triggers the Security Advisor
+--    errors. After running this file, also run 008_enable_rls.sql.
 -- ============================================================
 
 -- ── 1. Grants (anon = the browser role; idempotent) ──────────

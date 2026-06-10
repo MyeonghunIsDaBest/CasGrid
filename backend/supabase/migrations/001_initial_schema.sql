@@ -16,6 +16,9 @@
 --    There is no undo. Do not run against a database with real data
 --    you need to keep. To re-enable / repair Realtime + grants WITHOUT
 --    erasing data, run supabase/migrations/002_enable_realtime.sql instead.
+--
+-- ⚠️ This script leaves RLS DISABLED, which re-triggers the Security
+--    Advisor errors. After running it, also run 008_enable_rls.sql.
 -- ============================================================
 
 -- ── 1. Drop everything (CASCADE clears FKs + publication membership) ──
