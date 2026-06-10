@@ -9,6 +9,7 @@ import { initialRunningTimeFields } from '../utils/runningTime';
 import { toDateString } from '../utils/dateUtils';
 import { supabase } from '../lib/supabase';
 import * as db from '../lib/db';
+import { shouldIgnoreRemoteEntryDelete } from '../lib/realtimeGuards';
 
 // ─── Default values ──────────────────────────────────────────────────────────
 
@@ -259,6 +260,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const isSubscribedRef = useRef(false);
   // Debounce timer so online + visibility + reconnect don't stack re-syncs.
   const resyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Current schedule entries for the realtime DELETE guard — with RLS enabled
+  // the DELETE payload carries only the primary key, so the handler looks up
+  // date/isManualOverride here (the channel effect's closure is stale).
+  const scheduleEntriesRef = useRef<ScheduleEntry[]>(state.scheduleEntries);
+  useEffect(() => { scheduleEntriesRef.current = state.scheduleEntries; }, [state.scheduleEntries]);
 
   // ── 1. Data load (reusable; silent = quiet background catch-up) ─────────────
 
@@ -389,12 +395,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'schedule_entries' },
         ({ old: r }) => {
           // Past auto-entries represent work already done and must not be wiped
-          // locally by a stale DELETE echo from another client. REPLICA IDENTITY
-          // FULL (002_enable_realtime.sql) guarantees old.date and
-          // old.is_manual_override are present.
+          // locally by a stale DELETE echo from another client. With RLS enabled
+          // (008_enable_rls.sql) the DELETE payload carries only the primary key,
+          // so the guard falls back to the local copy of the row.
           const row = r as { id: string; date?: string; is_manual_override?: boolean };
-          const todayStr = toDateString(new Date());
-          if (row.date && row.date < todayStr && row.is_manual_override === false) return;
+          const local = scheduleEntriesRef.current.find(e => e.id === row.id);
+          if (shouldIgnoreRemoteEntryDelete(row, local, toDateString(new Date()))) return;
           withSkip(() => dispatch({ type: 'DELETE_SCHEDULE_ENTRY', payload: row.id }));
           note('schedule_entries', 'delete', 'Schedule entry removed');
         })
